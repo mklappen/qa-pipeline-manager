@@ -180,6 +180,7 @@ async def _p2_tests_from_clickup(req, llm, cu, log):
 
     if req.push_to_clickup:
         await tc_core.push_test_cases_to_clickup(test_cases, prefix, cu, log)
+        await tc_core.update_use_cases_to_pass(cases, cu["api_token"], log)
 
     return tc_core.format_test_cases_markdown(prefix, test_cases)
 

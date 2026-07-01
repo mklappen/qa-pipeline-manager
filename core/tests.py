@@ -99,9 +99,27 @@ async def fetch_approved_use_cases_from_clickup(list_id: str, token: str, log: L
         m = re.search(r"\[UC\s*-\s*([A-Za-z0-9]+)\]", t_title)
         if m:
             prefix_code = m.group(1)
-        cases.append({"title": t_title, "content": t_desc})
+        cases.append({"id": task.get("id"), "title": t_title, "content": t_desc})
 
     return cases, prefix_code
+
+
+async def update_use_cases_to_pass(cases: list, token: str, log: LogCallback):
+    await log("Updating processed Use Cases to status 'PASS'...")
+    async with httpx.AsyncClient(timeout=30) as client:
+        for case in cases:
+            task_id = case.get("id")
+            if not task_id:
+                continue
+            resp = await client.put(
+                f"https://api.clickup.com/api/v2/task/{task_id}",
+                json={"status": "PASS"},
+                headers={"Authorization": token, "Content-Type": "application/json"},
+            )
+            if resp.status_code in [200, 201]:
+                await log(f"  ✓ '{case['title']}' → PASS")
+            else:
+                await log(f"  Failed to update '{case['title']}': {resp.text}")
 
 
 async def push_test_cases_to_clickup(cases: list, prefix_code: str, clickup_settings: dict, log: LogCallback):
