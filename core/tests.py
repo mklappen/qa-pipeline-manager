@@ -70,19 +70,26 @@ def format_test_cases_markdown(prefix_code: str, cases: list) -> str:
 
 
 async def fetch_approved_use_cases_from_clickup(list_id: str, token: str, log: LogCallback):
-    await log(f"Fetching approved use cases from ClickUp list [{list_id}]...")
+    await log(f"Fetching all tasks from ClickUp list [{list_id}]...")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
-            f"https://api.clickup.com/api/v2/list/{list_id}/task?status=Approved",
+            f"https://api.clickup.com/api/v2/list/{list_id}/task",
             headers={"Authorization": token},
         )
         resp.raise_for_status()
-        tasks = resp.json().get("tasks", [])
+        all_tasks = resp.json().get("tasks", [])
+
+    # ClickUp returns status as a nested object: task["status"]["status"]
+    # Filter client-side (case-insensitive) so we're not reliant on API query param behaviour
+    tasks = [t for t in all_tasks if t.get("status", {}).get("status", "").lower() == "approved"]
+
+    await log(f"Found {len(tasks)} approved use cases out of {len(all_tasks)} total tasks.")
 
     if not tasks:
-        raise ValueError("No tasks with 'Approved' status found in the ClickUp list.")
-
-    await log(f"Found {len(tasks)} approved use cases.")
+        raise ValueError(
+            f"No tasks with status 'Approved' found in ClickUp list [{list_id}]. "
+            f"Found {len(all_tasks)} total tasks. Check the status name in ClickUp matches 'Approved'."
+        )
 
     cases = []
     prefix_code = "QA"
@@ -98,6 +105,8 @@ async def fetch_approved_use_cases_from_clickup(list_id: str, token: str, log: L
 
 
 async def push_test_cases_to_clickup(cases: list, prefix_code: str, clickup_settings: dict, log: LogCallback):
+    if not clickup_settings.get("test_list_id", "").strip():
+        raise ValueError("ClickUp Test Case List ID is not configured. Set it in Settings → ClickUp.")
     url = f"https://api.clickup.com/api/v2/list/{clickup_settings['test_list_id']}/task"
     headers = {"Authorization": clickup_settings["api_token"], "Content-Type": "application/json"}
 
