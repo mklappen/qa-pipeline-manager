@@ -1,0 +1,11 @@
+anthropic
+openai
+beautifulsoup4
+python-dotenv
+requests
+fastapi
+uvicorn[standard]
+httpx
+python-multipart
+pypdf
+python-docx

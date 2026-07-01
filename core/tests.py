@@ -1,0 +1,116 @@
+import re
+import json
+from typing import Callable, Awaitable
+
+import httpx
+from core.llm import call_llm
+
+LogCallback = Callable[[str], Awaitable[None]]
+
+
+async def generate_test_cases(context: str, llm_settings: dict, system_prompt: str, log: LogCallback) -> list:
+    raw = await call_llm(context, system_prompt, llm_settings, log)
+    return _parse_test_cases_json(raw, log)
+
+
+def _parse_test_cases_json(raw: str, log: LogCallback = None) -> list:
+    cleaned = raw
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1].rsplit("\n", 1)[0].strip()
+        if cleaned.startswith("json"):
+            cleaned = cleaned.split("\n", 1)[1].strip()
+
+    cleaned = re.sub(r'(?<!\\)\\(?!"|\\|/|b|f|n|r|t|u)', r"\\\\", cleaned)
+    cleaned = re.sub(r",\s*([\]}])", r"\1", cleaned)
+
+    try:
+        start = cleaned.find("[")
+        end = cleaned.rfind("]") + 1
+        return json.loads(cleaned[start:end] if start != -1 else cleaned)
+    except Exception:
+        compiled = []
+        for block in re.split(r"\}\s*,\s*\{|\}\s*\{", cleaned):
+            block = block.strip().strip("[]{}")
+            if not block:
+                continue
+            title_m = re.search(r'"title"\s*:\s*"([\s\S]*?)"', block)
+            uc_m = re.search(r'"use_case"\s*:\s*"([\s\S]*?)"', block)
+            desc_m = re.search(r'"description"\s*:\s*"([\s\S]*?)"', block)
+            if title_m and desc_m:
+                compiled.append({
+                    "title": title_m.group(1).replace('\\"', '"'),
+                    "use_case": uc_m.group(1) if uc_m else "",
+                    "description": desc_m.group(1).replace('\\"', '"').replace("\\n", "\n"),
+                })
+        return compiled
+
+
+def parse_use_cases_from_markdown(markdown_text: str) -> list:
+    """Extract use case blocks from use-case markdown output."""
+    blocks = re.split(r"(?=### USE CASE:)", markdown_text)
+    cases = []
+    for block in blocks:
+        block = block.strip()
+        if not block or "### USE CASE:" not in block:
+            continue
+        raw_title = block.splitlines()[0].replace("### USE CASE:", "").strip()
+        cases.append({"title": raw_title, "content": block})
+    return cases
+
+
+def format_test_cases_markdown(prefix_code: str, cases: list) -> str:
+    parts = [f"# Consolidated Test Specifications ({prefix_code})\n"]
+    for idx, case in enumerate(cases, 1):
+        prefixed_title = f"[{prefix_code}] - {case['title']}"
+        parts.append(f"## {idx}. {prefixed_title}\n")
+        if case.get("use_case"):
+            parts.append(f"**USE CASE:** {case['use_case']}\n")
+        parts.append(f"{case['description']}\n\n---\n")
+    return "\n".join(parts)
+
+
+async def fetch_approved_use_cases_from_clickup(list_id: str, token: str, log: LogCallback):
+    await log(f"Fetching approved use cases from ClickUp list [{list_id}]...")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"https://api.clickup.com/api/v2/list/{list_id}/task?status=Approved",
+            headers={"Authorization": token},
+        )
+        resp.raise_for_status()
+        tasks = resp.json().get("tasks", [])
+
+    if not tasks:
+        raise ValueError("No tasks with 'Approved' status found in the ClickUp list.")
+
+    await log(f"Found {len(tasks)} approved use cases.")
+
+    cases = []
+    prefix_code = "QA"
+    for task in tasks:
+        t_title = task.get("name", "")
+        t_desc = task.get("description", "")
+        m = re.search(r"\[UC\s*-\s*([A-Za-z0-9]+)\]", t_title)
+        if m:
+            prefix_code = m.group(1)
+        cases.append({"title": t_title, "content": t_desc})
+
+    return cases, prefix_code
+
+
+async def push_test_cases_to_clickup(cases: list, prefix_code: str, clickup_settings: dict, log: LogCallback):
+    url = f"https://api.clickup.com/api/v2/list/{clickup_settings['test_list_id']}/task"
+    headers = {"Authorization": clickup_settings["api_token"], "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30) as session:
+        for case in cases:
+            prefixed_title = f"[{prefix_code}] - {case['title']}"
+            payload = {
+                "name": prefixed_title,
+                "markdown_content": case["description"],
+                "status": clickup_settings["status"],
+            }
+            resp = await session.post(url, json=payload, headers=headers)
+            if resp.status_code in [200, 201]:
+                await log(f"  Created: {prefixed_title}")
+            else:
+                await log(f"  Failed '{prefixed_title}': {resp.text}")

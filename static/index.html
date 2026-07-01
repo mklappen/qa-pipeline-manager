@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QA Pipeline Manager</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<style>
+  :root {
+    --sidebar-w: 240px;
+    --sidebar-bg: #16213e;
+    --sidebar-active: #0f3460;
+    --accent: #4e9af1;
+  }
+  body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: #f0f4f8; }
+
+  /* ── sidebar ── */
+  #sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: var(--sidebar-w);
+    background: var(--sidebar-bg); color: #c9d1d9;
+    display: flex; flex-direction: column; z-index: 100;
+  }
+  #sidebar .brand {
+    padding: 1.25rem 1.25rem 0.75rem;
+    font-size: 1.1rem; font-weight: 700; color: #fff;
+    border-bottom: 1px solid #ffffff18;
+  }
+  #sidebar .brand small { display: block; font-size: .7rem; font-weight: 400; color: #8b949e; margin-top: 2px; }
+  #sidebar nav { padding: .5rem .5rem; flex: 1; }
+  #sidebar .nav-item button {
+    width: 100%; background: none; border: none; text-align: left;
+    color: #8b949e; padding: .55rem .85rem; border-radius: 8px;
+    display: flex; align-items: center; gap: .6rem; font-size: .88rem;
+    cursor: pointer; transition: background .15s, color .15s;
+  }
+  #sidebar .nav-item button:hover { background: #ffffff12; color: #c9d1d9; }
+  #sidebar .nav-item button.active { background: var(--sidebar-active); color: #fff; }
+  #sidebar .nav-item button i { font-size: 1rem; }
+  #sidebar .sidebar-footer {
+    padding: .75rem 1rem; font-size: .7rem; color: #484f58;
+    border-top: 1px solid #ffffff10;
+  }
+
+  /* ── main content ── */
+  #main { margin-left: var(--sidebar-w); min-height: 100vh; padding: 2rem; }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ── pipeline type cards ── */
+  .pipeline-card {
+    border: 2px solid #dee2e6; border-radius: 12px; cursor: pointer;
+    padding: .85rem; text-align: center; transition: all .15s;
+    background: #fff;
+  }
+  .pipeline-card:hover { border-color: var(--accent); background: #f0f7ff; }
+  .pipeline-card.selected { border-color: var(--accent); background: #e8f3ff; box-shadow: 0 0 0 3px #4e9af133; }
+  .pipeline-card .icon { font-size: 1.6rem; margin-bottom: .3rem; }
+  .pipeline-card .label { font-size: .72rem; font-weight: 600; color: #444; line-height: 1.3; }
+
+  /* ── log terminal ── */
+  #log-output {
+    background: #0d1117; color: #58a6ff; font-family: 'Consolas', monospace;
+    font-size: .8rem; padding: 1rem; border-radius: 8px;
+    height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+  }
+  #log-output .log-line { margin: 0; line-height: 1.6; }
+  #log-output .log-line.err { color: #f85149; }
+  #log-output .log-line.ok  { color: #3fb950; }
+
+  /* ── markdown result ── */
+  #result-output {
+    background: #fff; border: 1px solid #dee2e6; border-radius: 8px;
+    padding: 1.5rem; min-height: 260px; overflow-y: auto;
+    max-height: 70vh;
+  }
+  #result-output h1 { font-size: 1.4rem; border-bottom: 2px solid #dee2e6; padding-bottom: .4rem; }
+  #result-output h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+  #result-output h3 { font-size: .95rem; }
+  #result-output code { background: #f6f8fa; padding: .1em .3em; border-radius: 4px; font-size: .85em; }
+  #result-output pre  { background: #f6f8fa; padding: .75rem; border-radius: 6px; overflow-x: auto; }
+  #result-output hr   { border-color: #dee2e6; }
+  #result-output strong { color: #0f3460; }
+
+  /* ── history table ── */
+  .history-row { cursor: pointer; }
+  .history-row:hover td { background: #f8fafc; }
+  .badge-complete { background: #198754; }
+  .badge-error    { background: #dc3545; }
+  .badge-running  { background: #0d6efd; }
+
+  /* ── settings ── */
+  .settings-label { font-size: .8rem; font-weight: 600; color: #555; margin-bottom: .25rem; }
+  .settings-hint  { font-size: .72rem; color: #888; margin-top: .15rem; }
+  textarea.prompt-area { font-family: 'Consolas', monospace; font-size: .78rem; resize: vertical; }
+
+  /* ── util ── */
+  .section-title { font-size: 1.35rem; font-weight: 700; color: #16213e; margin-bottom: 1.25rem; }
+  .card { border: none; border-radius: 12px; box-shadow: 0 1px 4px #0001; }
+  .spinner-overlay {
+    display: none; align-items: center; justify-content: center;
+    gap: .5rem; color: #0d6efd; font-size: .85rem; margin-top: .5rem;
+  }
+  .spinner-overlay.visible { display: flex; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════ SIDEBAR ═══════════════════════════ -->
+<div id="sidebar">
+  <div class="brand">
+    QA Pipeline Manager
+    <small>Claude-powered · ClickUp integration</small>
+  </div>
+  <nav>
+    <ul class="nav flex-column gap-1 list-unstyled">
+      <li class="nav-item">
+        <button class="active" onclick="showPage('pipeline')" id="nav-pipeline">
+          <i class="bi bi-play-circle-fill"></i> Run Pipeline
+        </button>
+      </li>
+      <li class="nav-item">
+        <button onclick="showPage('history')" id="nav-history">
+          <i class="bi bi-clock-history"></i> History
+        </button>
+      </li>
+      <li class="nav-item">
+        <button onclick="showPage('settings')" id="nav-settings">
+          <i class="bi bi-gear-fill"></i> Settings
+        </button>
+      </li>
+    </ul>
+  </nav>
+  <div class="sidebar-footer">QA Pipeline Manager v2.0</div>
+</div>
+
+<!-- ═══════════════════════════════════════ MAIN ════════════════════════════ -->
+<div id="main">
+
+  <!-- ── PIPELINE PAGE ─────────────────────────────────────────────────────── -->
+  <div id="page-pipeline" class="page active">
+    <div class="section-title"><i class="bi bi-play-circle text-primary me-2"></i>Run Pipeline</div>
+
+    <!-- type selector -->
+    <div class="card mb-3 p-3">
+      <div class="mb-2" style="font-size:.8rem;font-weight:600;color:#666;">SELECT PIPELINE TYPE</div>
+      <div class="row g-2" id="pipeline-cards">
+        <div class="col"><div class="pipeline-card selected" onclick="selectPipeline(1)" id="pc-1">
+          <div class="icon">📋</div><div class="label">Use Cases<br>from Confluence / ClickUp</div>
+        </div></div>
+        <div class="col"><div class="pipeline-card" onclick="selectPipeline(2)" id="pc-2">
+          <div class="icon">✅</div><div class="label">Tests from Approved<br>ClickUp Use Cases</div>
+        </div></div>
+        <div class="col"><div class="pipeline-card" onclick="selectPipeline(3)" id="pc-3">
+          <div class="icon">⚡</div><div class="label">Tests from<br>Confluence / ClickUp</div>
+        </div></div>
+        <div class="col"><div class="pipeline-card" onclick="selectPipeline(4)" id="pc-4">
+          <div class="icon">📄</div><div class="label">Use Cases<br>from Requirements Text</div>
+        </div></div>
+        <div class="col"><div class="pipeline-card" onclick="selectPipeline(5)" id="pc-5">
+          <div class="icon">🔁</div><div class="label">Generate Test Cases<br>from Use Cases</div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- dynamic form -->
+    <div class="card mb-3 p-3" id="pipeline-form-card">
+      <!-- P1 / P3 -->
+      <div id="form-remote" class="">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="settings-label">Confluence Page ID <span class="text-muted fw-normal">(optional)</span></label>
+            <input type="text" class="form-control form-control-sm" id="conf-page-id" placeholder="e.g. 123456789">
+          </div>
+          <div class="col-md-6">
+            <label class="settings-label">ClickUp Task ID <span class="text-muted fw-normal">(optional)</span></label>
+            <input type="text" class="form-control form-control-sm" id="cu-task-id" placeholder="e.g. abc123xyz">
+          </div>
+        </div>
+      </div>
+
+      <!-- P4 -->
+      <div id="form-text" class="d-none">
+        <label class="settings-label">Requirements Text</label>
+        <div class="mb-2" style="font-size:.72rem;color:#888;">Paste your requirements or upload a file (.txt, .md, .pdf, .docx).</div>
+        <textarea class="form-control form-control-sm prompt-area" id="req-text" rows="8"
+          placeholder="# Requirements Specification: My Feature&#10;&#10;Paste requirements here..."></textarea>
+        <div class="d-flex align-items-center gap-2 mt-2">
+          <input type="file" class="form-control form-control-sm" id="req-file"
+            accept=".txt,.md,.pdf,.docx" onchange="uploadAndExtract(this, 'req-text')">
+          <div id="req-file-spinner" style="display:none;white-space:nowrap;font-size:.8rem;color:#0d6efd;">
+            <span class="spinner-border spinner-border-sm me-1"></span>Extracting…
+          </div>
+        </div>
+      </div>
+
+      <!-- P5 -->
+      <div id="form-usecases" class="d-none">
+        <div class="row g-2 mb-2">
+          <div class="col-md-6">
+            <label class="settings-label">Load from History Run</label>
+            <select class="form-select form-select-sm" id="uc-history-select" onchange="loadUcFromHistory()">
+              <option value="">— select a past use-case run —</option>
+            </select>
+          </div>
+          <div class="col-md-6 d-flex align-items-end">
+            <div class="settings-hint">OR paste use case markdown below</div>
+          </div>
+        </div>
+        <textarea class="form-control form-control-sm prompt-area" id="uc-text" rows="8"
+          placeholder="Paste use case markdown here (### USE CASE: headers)..."></textarea>
+      </div>
+
+      <!-- P2 notice -->
+      <div id="form-p2-notice" class="d-none">
+        <div class="alert alert-info mb-0 py-2 px-3" style="font-size:.83rem;">
+          <i class="bi bi-info-circle me-1"></i>
+          This pipeline fetches all tasks with status <strong>Approved</strong> from your configured ClickUp
+          Use Case list and generates test cases from them. No additional input required.
+        </div>
+      </div>
+
+      <!-- shared options -->
+      <div class="mt-3 pt-3 border-top">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="settings-label">Prefix Override <span class="text-muted fw-normal">(optional)</span></label>
+            <input type="text" class="form-control form-control-sm" id="prefix-override" placeholder="Auto-detected (e.g. MYF)" maxlength="6">
+          </div>
+          <div class="col-md-4 d-flex align-items-end" id="push-toggle-wrap">
+            <div class="form-check form-switch mb-1">
+              <input class="form-check-input" type="checkbox" id="push-to-clickup">
+              <label class="form-check-label" for="push-to-clickup" style="font-size:.83rem;">Push to ClickUp</label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- advanced / system prompt override -->
+      <div class="mt-2">
+        <button class="btn btn-link btn-sm text-secondary p-0 text-decoration-none"
+          data-bs-toggle="collapse" data-bs-target="#adv-section">
+          <i class="bi bi-chevron-down me-1"></i>Advanced — system prompt override
+        </button>
+        <div class="collapse mt-2" id="adv-section">
+          <label class="settings-label">System Prompt Override <span class="text-muted fw-normal">(leave blank to use saved default)</span></label>
+          <textarea class="form-control form-control-sm prompt-area" id="sys-prompt-override" rows="5"
+            placeholder="Override the system prompt for this run only..."></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- run button -->
+    <div class="d-flex gap-2 align-items-center mb-3">
+      <button class="btn btn-primary px-4" onclick="runPipeline()" id="run-btn">
+        <i class="bi bi-play-fill me-1"></i> Run
+      </button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="clearOutput()" id="clear-btn">Clear output</button>
+      <div class="spinner-overlay" id="run-spinner">
+        <div class="spinner-border spinner-border-sm"></div> Running pipeline…
+      </div>
+    </div>
+
+    <!-- output area -->
+    <div id="output-area" style="display:none">
+      <ul class="nav nav-tabs mb-0" id="outputTabs">
+        <li class="nav-item">
+          <button class="nav-link active" onclick="switchOutputTab('log')" id="tab-log">
+            <i class="bi bi-terminal me-1"></i>Live Log
+          </button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-link" onclick="switchOutputTab('result')" id="tab-result">
+            <i class="bi bi-file-richtext me-1"></i>Result
+            <span class="badge bg-secondary ms-1" id="result-badge" style="display:none"></span>
+          </button>
+        </li>
+      </ul>
+      <div class="tab-content border border-top-0 rounded-bottom p-0">
+        <div id="panel-log" class="tab-pane-content">
+          <div id="log-output"></div>
+        </div>
+        <div id="panel-result" style="display:none">
+          <div class="d-flex justify-content-end gap-2 p-2 border-bottom bg-light rounded-0">
+            <button class="btn btn-outline-secondary btn-sm" onclick="copyResult()">
+              <i class="bi bi-clipboard me-1"></i>Copy
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="downloadResult()">
+              <i class="bi bi-download me-1"></i>Download .md
+            </button>
+          </div>
+          <div id="result-output" class="p-3"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── HISTORY PAGE ──────────────────────────────────────────────────────── -->
+  <div id="page-history" class="page">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="section-title mb-0"><i class="bi bi-clock-history text-primary me-2"></i>Run History</div>
+      <button class="btn btn-outline-secondary btn-sm" onclick="loadHistory()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0" id="history-table">
+          <thead class="table-light">
+            <tr>
+              <th style="width:50px">#</th>
+              <th>Pipeline</th>
+              <th>Source</th>
+              <th style="width:110px">Status</th>
+              <th style="width:160px">Date</th>
+              <th style="width:80px"></th>
+            </tr>
+          </thead>
+          <tbody id="history-body">
+            <tr><td colspan="6" class="text-center text-muted py-4">Loading history…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- history detail panel -->
+    <div class="card mt-3" id="history-detail" style="display:none">
+      <div class="card-header d-flex justify-content-between align-items-center bg-white">
+        <strong id="history-detail-title">Result</strong>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary btn-sm" onclick="copyHistoryResult()">
+            <i class="bi bi-clipboard me-1"></i>Copy
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="downloadHistoryResult()">
+            <i class="bi bi-download me-1"></i>Download .md
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" id="btn-use-in-p5" onclick="loadIntoP5()">
+            <i class="bi bi-arrow-right-circle me-1"></i>Use in Pipeline 5
+          </button>
+          <button class="btn btn-sm btn-link text-secondary" onclick="document.getElementById('history-detail').style.display='none'">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+      </div>
+      <div id="history-detail-output" class="p-4" style="min-height:200px;max-height:60vh;overflow-y:auto;"></div>
+    </div>
+  </div>
+
+  <!-- ── SETTINGS PAGE ─────────────────────────────────────────────────────── -->
+  <div id="page-settings" class="page">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="section-title mb-0"><i class="bi bi-gear text-primary me-2"></i>Settings</div>
+      <button class="btn btn-primary" onclick="saveSettings()">
+        <i class="bi bi-save me-1"></i>Save All Settings
+      </button>
+    </div>
+    <div id="settings-saved-alert" class="alert alert-success py-2 mb-3" style="display:none">
+      <i class="bi bi-check-circle me-1"></i>Settings saved successfully.
+    </div>
+
+    <ul class="nav nav-tabs mb-0" id="settingsTabs">
+      <li class="nav-item"><button class="nav-link active" onclick="switchSettingsTab('llm')" id="stab-llm">
+        <i class="bi bi-cpu me-1"></i>LLM
+      </button></li>
+      <li class="nav-item"><button class="nav-link" onclick="switchSettingsTab('confluence')" id="stab-confluence">
+        <i class="bi bi-cloud me-1"></i>Confluence
+      </button></li>
+      <li class="nav-item"><button class="nav-link" onclick="switchSettingsTab('clickup')" id="stab-clickup">
+        <i class="bi bi-kanban me-1"></i>ClickUp
+      </button></li>
+    </ul>
+
+    <div class="card border-top-0 rounded-top-0 p-4">
+
+      <!-- LLM tab -->
+      <div id="stab-content-llm">
+
+        <!-- provider toggle -->
+        <div class="mb-3">
+          <div class="settings-label mb-2">LLM Provider</div>
+          <div class="d-flex gap-3">
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="llm-provider" id="provider-anthropic"
+                value="anthropic" checked onchange="toggleProvider()">
+              <label class="form-check-label" for="provider-anthropic">Anthropic Claude</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="llm-provider" id="provider-self"
+                value="self" onchange="toggleProvider()">
+              <label class="form-check-label" for="provider-self">Self-hosted (OpenAI-compatible)</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Anthropic section -->
+        <div id="section-anthropic" class="border rounded p-3 mb-3">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="settings-label">Anthropic API Key</label>
+              <input type="password" class="form-control form-control-sm" id="s-llm-anthropic_api_key"
+                placeholder="sk-ant-api03-…">
+              <div class="settings-hint">Stored in the database. Leave blank to use <code>ANTHROPIC_API_KEY</code> from .env</div>
+            </div>
+            <div class="col-md-4">
+              <label class="settings-label">Claude Model</label>
+              <input type="text" class="form-control form-control-sm" id="s-llm-model"
+                placeholder="claude-sonnet-4-6">
+              <div class="settings-hint">e.g. claude-sonnet-4-6, claude-opus-4-8</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Self-hosted section -->
+        <div id="section-self" class="border rounded p-3 mb-3" style="display:none">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="settings-label">LLM Host URL</label>
+              <input type="text" class="form-control form-control-sm" id="s-llm-llm_host"
+                placeholder="http://192.168.1.100:11434/v1">
+              <div class="settings-hint">OpenAI-compatible base URL (Ollama, vLLM, LM Studio…)</div>
+            </div>
+            <div class="col-md-6">
+              <label class="settings-label">Model Name</label>
+              <input type="text" class="form-control form-control-sm" id="s-llm-llm_model"
+                placeholder="google/gemma-3-27b-it">
+              <div class="settings-hint">Exact model identifier served by the host</div>
+            </div>
+            <div class="col-md-6">
+              <label class="settings-label">API Key <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="password" class="form-control form-control-sm" id="s-llm-llm_api_key"
+                placeholder="Leave blank if not required">
+            </div>
+          </div>
+        </div>
+
+        <!-- shared -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-3">
+            <label class="settings-label">Max Tokens</label>
+            <input type="number" class="form-control form-control-sm" id="s-llm-max_tokens"
+              min="1024" max="32768" step="512">
+          </div>
+          <div class="col-md-3">
+            <label class="settings-label">Temperature</label>
+            <input type="number" class="form-control form-control-sm" id="s-llm-temperature"
+              min="0" max="1" step="0.05">
+          </div>
+        </div>
+        <div class="mt-2">
+          <label class="settings-label">Use Case System Prompt <span class="text-muted fw-normal">(pipelines 1 & 4)</span></label>
+          <textarea class="form-control form-control-sm prompt-area mt-1" id="s-llm-use_case_system_prompt" rows="12"></textarea>
+        </div>
+        <div class="mt-3">
+          <label class="settings-label">Test Case System Prompt <span class="text-muted fw-normal">(pipelines 2, 3 & 5)</span></label>
+          <textarea class="form-control form-control-sm prompt-area mt-1" id="s-llm-test_case_system_prompt" rows="12"></textarea>
+        </div>
+      </div>
+
+      <!-- Confluence tab -->
+      <div id="stab-content-confluence" style="display:none">
+        <div class="row g-3">
+          <div class="col-md-8">
+            <label class="settings-label">Confluence Base URL</label>
+            <input type="text" class="form-control form-control-sm" id="s-confluence-url" placeholder="https://yourorg.atlassian.net">
+          </div>
+          <div class="col-md-6">
+            <label class="settings-label">Email</label>
+            <input type="email" class="form-control form-control-sm" id="s-confluence-email" placeholder="you@yourorg.com">
+          </div>
+          <div class="col-md-6">
+            <label class="settings-label">API Token</label>
+            <input type="password" class="form-control form-control-sm" id="s-confluence-api_token" placeholder="Atlassian API token">
+            <div class="settings-hint">Generate at id.atlassian.com → Security → API tokens</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ClickUp tab -->
+      <div id="stab-content-clickup" style="display:none">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="settings-label">ClickUp API Token</label>
+            <input type="password" class="form-control form-control-sm" id="s-clickup-api_token" placeholder="pk_...">
+          </div>
+          <div class="col-md-6">
+            <label class="settings-label">Use Case List ID</label>
+            <input type="text" class="form-control form-control-sm" id="s-clickup-use_case_list_id" placeholder="Source list for use cases">
+          </div>
+          <div class="col-md-6">
+            <label class="settings-label">Test Case List ID</label>
+            <input type="text" class="form-control form-control-sm" id="s-clickup-test_list_id" placeholder="Destination list for test cases">
+          </div>
+          <div class="col-md-6">
+            <label class="settings-label">Default Task Status</label>
+            <input type="text" class="form-control form-control-sm" id="s-clickup-status" placeholder="AI - READY FOR REVIEW">
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /#main -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+<script>
+// ── config ────────────────────────────────────────────────────────────────────
+marked.setOptions({ breaks: true, gfm: true });
+
+// ── state ─────────────────────────────────────────────────────────────────────
+let currentPipeline = 1;
+let currentResultMd = '';
+let currentHistoryMd = '';
+let currentHistoryTitle = '';
+let currentRunId = null;
+
+// ── page navigation ───────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('#sidebar nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('nav-' + name).classList.add('active');
+  if (name === 'history') loadHistory();
+  if (name === 'settings') loadSettings();
+}
+
+// ── pipeline type selector ────────────────────────────────────────────────────
+function selectPipeline(type) {
+  currentPipeline = type;
+  for (let i = 1; i <= 5; i++) {
+    document.getElementById('pc-' + i).classList.toggle('selected', i === type);
+  }
+  document.getElementById('form-remote').classList.add('d-none');
+  document.getElementById('form-text').classList.add('d-none');
+  document.getElementById('form-usecases').classList.add('d-none');
+  document.getElementById('form-p2-notice').classList.add('d-none');
+  document.getElementById('push-toggle-wrap').style.display = '';
+
+  if (type === 1 || type === 3) {
+    document.getElementById('form-remote').classList.remove('d-none');
+  } else if (type === 2) {
+    document.getElementById('form-p2-notice').classList.remove('d-none');
+  } else if (type === 4) {
+    document.getElementById('form-text').classList.remove('d-none');
+    document.getElementById('push-toggle-wrap').style.display = 'none';
+  } else if (type === 5) {
+    document.getElementById('form-usecases').classList.remove('d-none');
+    document.getElementById('push-toggle-wrap').style.display = 'none';
+    loadUcHistoryOptions();
+  }
+}
+
+// ── file upload / extraction ──────────────────────────────────────────────────
+async function uploadAndExtract(input, targetId) {
+  const file = input.files[0];
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+
+  if (ext === 'txt' || ext === 'md') {
+    const reader = new FileReader();
+    reader.onload = e => { document.getElementById(targetId).value = e.target.result; };
+    reader.readAsText(file);
+    return;
+  }
+
+  // PDF / DOCX — send to backend
+  const spinner = document.getElementById('req-file-spinner');
+  if (spinner) spinner.style.display = '';
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch('/api/extract-text', { method: 'POST', body: form });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
+    const { text } = await res.json();
+    document.getElementById(targetId).value = text;
+  } catch (e) {
+    alert('Failed to extract text: ' + e.message);
+  } finally {
+    if (spinner) spinner.style.display = 'none';
+  }
+}
+
+// ── load use-case history into pipeline 5 dropdown ───────────────────────────
+async function loadUcHistoryOptions() {
+  try {
+    const runs = await apiFetch('/api/history');
+    const sel = document.getElementById('uc-history-select');
+    const ucRuns = runs.filter(r => r.pipeline_type === 1 || r.pipeline_type === 4);
+    sel.innerHTML = '<option value="">— select a past use-case run —</option>';
+    ucRuns.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = `#${r.id} – ${r.pipeline_name} (${r.created_at.split('T')[0] || r.created_at.substring(0,10)})`;
+      sel.appendChild(opt);
+    });
+  } catch (e) { /* ignore */ }
+}
+
+async function loadUcFromHistory() {
+  const id = document.getElementById('uc-history-select').value;
+  if (!id) return;
+  try {
+    const run = await apiFetch('/api/history/' + id);
+    document.getElementById('uc-text').value = run.output_markdown || '';
+  } catch (e) { appendLog('Failed to load history run: ' + e.message, 'err'); }
+}
+
+// ── run pipeline ──────────────────────────────────────────────────────────────
+async function runPipeline() {
+  const payload = buildPayload();
+  if (!payload) return;
+
+  document.getElementById('output-area').style.display = '';
+  document.getElementById('log-output').innerHTML = '';
+  document.getElementById('result-output').innerHTML = '';
+  document.getElementById('result-badge').style.display = 'none';
+  currentResultMd = '';
+  switchOutputTab('log');
+  setRunning(true);
+
+  try {
+    const { job_id } = await apiFetch('/api/pipeline/run', { method: 'POST', body: JSON.stringify(payload) });
+    const evtSrc = new EventSource('/api/pipeline/stream/' + job_id);
+
+    evtSrc.onmessage = e => {
+      const item = JSON.parse(e.data);
+      if (item.type === 'log') {
+        appendLog(item.message);
+      } else if (item.type === 'run_id') {
+        currentRunId = item.run_id;
+        appendLog(`Run #${item.run_id} started.`, 'ok');
+      } else if (item.type === 'result') {
+        currentResultMd = item.markdown;
+        document.getElementById('result-output').innerHTML = marked.parse(item.markdown);
+        const count = (item.markdown.match(/^##\s/gm) || []).length;
+        const badge = document.getElementById('result-badge');
+        badge.textContent = count + ' items';
+        badge.style.display = '';
+      } else if (item.type === 'done') {
+        appendLog(`Done! Run #${item.run_id} saved to history.`, 'ok');
+        evtSrc.close();
+        setRunning(false);
+        switchOutputTab('result');
+      } else if (item.type === 'error') {
+        appendLog('ERROR: ' + item.message, 'err');
+        evtSrc.close();
+        setRunning(false);
+      }
+    };
+    evtSrc.onerror = () => {
+      appendLog('Connection lost.', 'err');
+      evtSrc.close();
+      setRunning(false);
+    };
+  } catch (err) {
+    appendLog('Failed to start pipeline: ' + err.message, 'err');
+    setRunning(false);
+  }
+}
+
+function buildPayload() {
+  const t = currentPipeline;
+  const base = {
+    pipeline_type: t,
+    push_to_clickup: document.getElementById('push-to-clickup').checked,
+    prefix_override: document.getElementById('prefix-override').value.trim() || null,
+    system_prompt_override: document.getElementById('sys-prompt-override').value.trim() || null,
+  };
+
+  if (t === 1 || t === 3) {
+    const confId = document.getElementById('conf-page-id').value.trim();
+    const cuId   = document.getElementById('cu-task-id').value.trim();
+    if (!confId && !cuId) { alert('Enter at least one source: Confluence Page ID or ClickUp Task ID.'); return null; }
+    return { ...base, confluence_page_id: confId || null, clickup_task_id: cuId || null };
+  }
+  if (t === 2) return base;
+  if (t === 4) {
+    const txt = document.getElementById('req-text').value.trim();
+    if (!txt) { alert('Paste or upload your requirements text.'); return null; }
+    return { ...base, requirements_text: txt };
+  }
+  if (t === 5) {
+    const txt   = document.getElementById('uc-text').value.trim();
+    const runId = parseInt(document.getElementById('uc-history-select').value) || null;
+    if (!txt && !runId) { alert('Paste use case text or select a history run.'); return null; }
+    return { ...base, use_case_text: txt || null, use_case_run_id: runId };
+  }
+  return base;
+}
+
+// ── output helpers ────────────────────────────────────────────────────────────
+function appendLog(msg, cls = '') {
+  const el = document.getElementById('log-output');
+  const line = document.createElement('div');
+  line.className = 'log-line' + (cls ? ' ' + cls : '');
+  line.textContent = '› ' + msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function switchOutputTab(tab) {
+  document.getElementById('panel-log').style.display    = tab === 'log'    ? '' : 'none';
+  document.getElementById('panel-result').style.display = tab === 'result' ? '' : 'none';
+  document.getElementById('tab-log').classList.toggle('active',    tab === 'log');
+  document.getElementById('tab-result').classList.toggle('active', tab === 'result');
+}
+
+function setRunning(yes) {
+  document.getElementById('run-btn').disabled = yes;
+  document.getElementById('run-spinner').classList.toggle('visible', yes);
+}
+
+function clearOutput() {
+  document.getElementById('output-area').style.display = 'none';
+  document.getElementById('log-output').innerHTML = '';
+  document.getElementById('result-output').innerHTML = '';
+  currentResultMd = '';
+}
+
+function copyResult() {
+  navigator.clipboard.writeText(currentResultMd).catch(() => {});
+}
+
+function downloadResult() {
+  downloadMd(currentResultMd, 'qa_pipeline_result.md');
+}
+
+function downloadMd(text, filename) {
+  const a = document.createElement('a');
+  a.href = 'data:text/markdown;charset=utf-8,' + encodeURIComponent(text);
+  a.download = filename;
+  a.click();
+}
+
+// ── history page ──────────────────────────────────────────────────────────────
+async function loadHistory() {
+  const body = document.getElementById('history-body');
+  body.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Loading…</td></tr>';
+  document.getElementById('history-detail').style.display = 'none';
+  try {
+    const runs = await apiFetch('/api/history');
+    if (!runs.length) {
+      body.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No runs yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = '';
+    runs.forEach(r => {
+      const badgeCls = r.status === 'complete' ? 'badge-complete' : r.status === 'error' ? 'badge-error' : 'badge-running';
+      const src = (() => {
+        try {
+          const s = JSON.parse(r.source_info || '{}');
+          const parts = [];
+          if (s.confluence_page_id) parts.push('Conf: ' + s.confluence_page_id);
+          if (s.clickup_task_id)   parts.push('CU: '   + s.clickup_task_id);
+          return parts.join(', ') || '—';
+        } catch { return r.source_info || '—'; }
+      })();
+      const date = (r.created_at || '').replace('T', ' ').substring(0, 16);
+      const tr = document.createElement('tr');
+      tr.className = 'history-row';
+      tr.innerHTML = `
+        <td class="text-muted small">#${r.id}</td>
+        <td><span style="font-size:.82rem">${r.pipeline_name}</span></td>
+        <td class="text-muted small">${src}</td>
+        <td><span class="badge ${badgeCls}">${r.status}</span></td>
+        <td class="text-muted small">${date}</td>
+        <td><button class="btn btn-link btn-sm text-danger p-0" onclick="deleteRun(${r.id},event)">
+          <i class="bi bi-trash"></i></button></td>`;
+      tr.addEventListener('click', () => viewHistoryRun(r.id, r.pipeline_name, r.pipeline_type));
+      body.appendChild(tr);
+    });
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="6" class="text-danger text-center py-3">' + e.message + '</td></tr>';
+  }
+}
+
+async function viewHistoryRun(id, name, pipelineType) {
+  try {
+    const run = await apiFetch('/api/history/' + id);
+    currentHistoryMd = run.output_markdown || '';
+    currentHistoryTitle = name + ' #' + id;
+    document.getElementById('history-detail-title').textContent = currentHistoryTitle;
+    document.getElementById('history-detail-output').innerHTML = currentHistoryMd
+      ? marked.parse(currentHistoryMd)
+      : '<em class="text-muted">No output recorded.</em>';
+    // Only show "Use in Pipeline 5" for use-case runs (types 1 and 4)
+    const isUseCaseRun = (pipelineType === 1 || pipelineType === 4);
+    document.getElementById('btn-use-in-p5').style.display = isUseCaseRun ? '' : 'none';
+    document.getElementById('history-detail').style.display = '';
+    document.getElementById('history-detail').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) { alert('Failed to load run: ' + e.message); }
+}
+
+async function deleteRun(id, event) {
+  event.stopPropagation();
+  if (!confirm(`Delete run #${id}?`)) return;
+  await apiFetch('/api/history/' + id, { method: 'DELETE' });
+  loadHistory();
+}
+
+function copyHistoryResult() {
+  navigator.clipboard.writeText(currentHistoryMd).catch(() => {});
+}
+
+function downloadHistoryResult() {
+  downloadMd(currentHistoryMd, 'qa_run_' + currentHistoryTitle.replace(/[^a-z0-9]/gi, '_') + '.md');
+}
+
+function loadIntoP5() {
+  document.getElementById('uc-text').value = currentHistoryMd;
+  selectPipeline(5);
+  showPage('pipeline');
+}
+
+// ── settings page ─────────────────────────────────────────────────────────────
+let currentSettingsTab = 'llm';
+
+function switchSettingsTab(tab) {
+  ['llm', 'confluence', 'clickup'].forEach(t => {
+    document.getElementById('stab-content-' + t).style.display  = t === tab ? '' : 'none';
+    document.getElementById('stab-' + t).classList.toggle('active', t === tab);
+  });
+  currentSettingsTab = tab;
+}
+
+function toggleProvider() {
+  const isSelf = document.getElementById('provider-self').checked;
+  document.getElementById('section-anthropic').style.display = isSelf ? 'none' : '';
+  document.getElementById('section-self').style.display      = isSelf ? '' : 'none';
+}
+
+async function loadSettings() {
+  try {
+    const s = await apiFetch('/api/settings');
+    const llm  = s.llm || {};
+    const conf = s.confluence || {};
+    const cu   = s.clickup || {};
+
+    // provider toggle — self-hosted if llm_host is set
+    const isSelf = !!(llm.llm_host || '').trim();
+    document.getElementById(isSelf ? 'provider-self' : 'provider-anthropic').checked = true;
+    toggleProvider();
+
+    setVal('s-llm-anthropic_api_key',        llm.anthropic_api_key || '');
+    setVal('s-llm-model',                    llm.model || '');
+    setVal('s-llm-llm_host',                 llm.llm_host || '');
+    setVal('s-llm-llm_model',                llm.llm_model || '');
+    setVal('s-llm-llm_api_key',              llm.llm_api_key || '');
+    setVal('s-llm-max_tokens',               llm.max_tokens || '8192');
+    setVal('s-llm-temperature',              llm.temperature || '0.2');
+    setVal('s-llm-use_case_system_prompt',   llm.use_case_system_prompt || '');
+    setVal('s-llm-test_case_system_prompt',  llm.test_case_system_prompt || '');
+    setVal('s-confluence-url',               conf.url || '');
+    setVal('s-confluence-email',             conf.email || '');
+    setVal('s-confluence-api_token',         conf.api_token || '');
+    setVal('s-clickup-api_token',            cu.api_token || '');
+    setVal('s-clickup-use_case_list_id',     cu.use_case_list_id || '');
+    setVal('s-clickup-test_list_id',         cu.test_list_id || '');
+    setVal('s-clickup-status',               cu.status || '');
+  } catch (e) { console.error('Failed to load settings', e); }
+}
+
+async function saveSettings() {
+  const payload = {
+    settings: {
+      llm: {
+        anthropic_api_key:       getVal('s-llm-anthropic_api_key'),
+        model:                   getVal('s-llm-model'),
+        llm_host:                getVal('s-llm-llm_host'),
+        llm_model:               getVal('s-llm-llm_model'),
+        llm_api_key:             getVal('s-llm-llm_api_key'),
+        max_tokens:              getVal('s-llm-max_tokens'),
+        temperature:             getVal('s-llm-temperature'),
+        use_case_system_prompt:  getVal('s-llm-use_case_system_prompt'),
+        test_case_system_prompt: getVal('s-llm-test_case_system_prompt'),
+      },
+      confluence: {
+        url:       getVal('s-confluence-url'),
+        email:     getVal('s-confluence-email'),
+        api_token: getVal('s-confluence-api_token'),
+      },
+      clickup: {
+        api_token:        getVal('s-clickup-api_token'),
+        use_case_list_id: getVal('s-clickup-use_case_list_id'),
+        test_list_id:     getVal('s-clickup-test_list_id'),
+        status:           getVal('s-clickup-status'),
+      },
+    }
+  };
+  try {
+    await apiFetch('/api/settings', { method: 'PUT', body: JSON.stringify(payload) });
+    const alert = document.getElementById('settings-saved-alert');
+    alert.style.display = '';
+    setTimeout(() => { alert.style.display = 'none'; }, 3000);
+  } catch (e) { alert('Save failed: ' + e.message); }
+}
+
+// ── API helper ────────────────────────────────────────────────────────────────
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    ...opts,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`HTTP ${res.status}: ${body}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function setVal(id, val) { const el = document.getElementById(id); if (el) el.value = val; }
+function getVal(id)      { const el = document.getElementById(id); return el ? el.value : ''; }
+
+// ── init ──────────────────────────────────────────────────────────────────────
+selectPipeline(1);
+</script>
+</body>
+</html>

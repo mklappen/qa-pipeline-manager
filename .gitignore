@@ -1,0 +1,8 @@
+.env
+.env.local
+venv/
+qa_pipeline.db
+__pycache__/
+*.pyc
+*.pyo
+.obsidian/
