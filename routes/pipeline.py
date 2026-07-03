@@ -18,10 +18,10 @@ router = APIRouter()
 _jobs: Dict[str, asyncio.Queue] = {}
 
 PIPELINE_NAMES = {
-    1: "Use Cases from Confluence / ClickUp",
-    2: "Tests from Approved ClickUp Use Cases",
-    3: "Tests from Confluence / ClickUp",
-    4: "Use Cases from Requirements Text",
+    1: "Create Use Cases from Confluence / ClickUp Requirements",
+    2: "Generate Test Cases from Approved ClickUp Use Cases",
+    3: "Generate Test Cases from Confluence / ClickUp Requirements",
+    4: "Create Use Cases from Requirements file or text",
     5: "Generate Test Cases from Use Cases",
 }
 
