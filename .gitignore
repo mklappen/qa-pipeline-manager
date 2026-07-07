@@ -2,7 +2,10 @@
 .env.local
 venv/
 qa_pipeline.db
+database.db
 __pycache__/
 *.pyc
 *.pyo
 .obsidian/
+.claude/
+requirements.md

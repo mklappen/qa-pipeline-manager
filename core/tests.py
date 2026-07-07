@@ -46,7 +46,11 @@ def _parse_test_cases_json(raw: str, log: LogCallback = None) -> list:
 
 
 def parse_use_cases_from_markdown(markdown_text: str) -> list:
-    """Extract use case blocks from use-case markdown output."""
+    """Extract use case blocks (with case number + priority, when present) from use-case markdown output."""
+    # "## N. [case_number] - Title" headers appear once per case, in document order, ahead of
+    # their "### USE CASE:" block — collect them separately since the split below discards them.
+    header_numbers = re.findall(r"^##\s*\d+\.\s*\[([^\]]+)\]", markdown_text, re.MULTILINE)
+
     blocks = re.split(r"(?=### USE CASE:)", markdown_text)
     cases = []
     for block in blocks:
@@ -54,7 +58,57 @@ def parse_use_cases_from_markdown(markdown_text: str) -> list:
         if not block or "### USE CASE:" not in block:
             continue
         raw_title = block.splitlines()[0].replace("### USE CASE:", "").strip()
-        cases.append({"title": raw_title, "content": block})
+        # Strip trailing separators and next-section headers that bleed in
+        # because ## N. [case_number] headers appear before the next ### USE CASE: split point
+        lines = block.rstrip().splitlines()
+        while lines and (
+            lines[-1].strip() in ("---", "")
+            or re.match(r"^##\s+\d+", lines[-1].strip())
+        ):
+            lines.pop()
+        content = "\n".join(lines)
+        priority_m = re.search(r"\*\*Priority:\*\*\s*(Critical|High|Normal|Low)", content, re.IGNORECASE)
+        priority = priority_m.group(1).title() if priority_m else "Normal"
+        cases.append({"title": raw_title, "priority": priority, "content": content})
+
+    # Only trust the collected header numbers if they line up 1:1 with parsed cases
+    # (arbitrary pasted text may not include our "## N. [id]" header convention at all).
+    if len(header_numbers) == len(cases):
+        for c, num in zip(cases, header_numbers):
+            c["case_number"] = num.strip()
+    else:
+        for c in cases:
+            c["case_number"] = ""
+    return cases
+
+
+def parse_test_cases_from_markdown(markdown_text: str) -> list:
+    """Extract individual test case blocks from formatted test case markdown output."""
+    blocks = re.split(r"(?=## \d+\. \[)", markdown_text)
+    cases = []
+    for block in blocks:
+        block = block.strip()
+        if not block or not re.match(r"^## \d+\. \[", block):
+            continue
+        title_line = block.splitlines()[0]
+        title_m = re.match(r"^## \d+\. \[[^\]]+\] - (.+)$", title_line)
+        title = title_m.group(1).strip() if title_m else title_line
+        prefix_m = re.match(r"^## \d+\. \[([^\]]+)\]", title_line)
+        prefix = prefix_m.group(1) if prefix_m else ""
+        uc_m = re.search(r"\*\*USE CASE:\*\* (.+)", block)
+        use_case_ref = uc_m.group(1).strip() if uc_m else ""
+        priority_m = re.search(r"\*\*PRIORITY:\*\*\s*(Critical|High|Normal|Low)", block, re.IGNORECASE)
+        priority = priority_m.group(1).title() if priority_m else "Normal"
+        lines = block.rstrip().splitlines()
+        while lines and lines[-1].strip() in ("---", ""):
+            lines.pop()
+        cases.append({
+            "title": title,
+            "prefix_code": prefix,
+            "use_case_ref": use_case_ref,
+            "priority": priority,
+            "content": "\n".join(lines),
+        })
     return cases
 
 
@@ -65,6 +119,7 @@ def format_test_cases_markdown(prefix_code: str, cases: list) -> str:
         parts.append(f"## {idx}. {prefixed_title}\n")
         if case.get("use_case"):
             parts.append(f"**USE CASE:** {case['use_case']}\n")
+        parts.append(f"**PRIORITY:** {case.get('priority', 'Normal')}\n")
         parts.append(f"{case['description']}\n\n---\n")
     return "\n".join(parts)
 
@@ -96,10 +151,24 @@ async def fetch_approved_use_cases_from_clickup(list_id: str, token: str, log: L
     for task in tasks:
         t_title = task.get("name", "")
         t_desc = task.get("description", "")
-        m = re.search(r"\[UC\s*-\s*([A-Za-z0-9]+)\]", t_title)
+        case_number = ""
+        m = re.search(r"\[([A-Za-z0-9]+)-(\d+)\]", t_title)
         if m:
             prefix_code = m.group(1)
-        cases.append({"id": task.get("id"), "title": t_title, "content": t_desc})
+            case_number = f"{m.group(1)}-{m.group(2)}"
+        else:
+            legacy_m = re.search(r"\[UC\s*-\s*([A-Za-z0-9]+)\]", t_title)
+            if legacy_m:
+                prefix_code = legacy_m.group(1)
+        priority_m = re.search(r"\*\*Priority:\*\*\s*(Critical|High|Normal|Low)", t_desc, re.IGNORECASE)
+        priority = priority_m.group(1).title() if priority_m else "Normal"
+        cases.append({
+            "id": task.get("id"),
+            "title": t_title,
+            "content": t_desc,
+            "case_number": case_number,
+            "priority": priority,
+        })
 
     return cases, prefix_code
 

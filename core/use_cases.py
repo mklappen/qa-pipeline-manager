@@ -72,16 +72,23 @@ async def generate_use_cases(context: str, llm_settings: dict, system_prompt: st
 def parse_use_case_blocks(raw_markdown: str, prefix_code: str) -> list:
     blocks = re.split(r"(?=### USE CASE:)", raw_markdown)
     compiled = []
+    idx = 0
     for block in blocks:
         block = block.strip()
         if not block:
             continue
         lines = block.splitlines()
         if "### USE CASE:" in lines[0]:
+            idx += 1
+            case_number = f"{prefix_code}-{idx}"
             raw_title = lines[0].replace("### USE CASE:", "").strip()
+            priority_m = re.search(r"\*\*Priority:\*\*\s*(Critical|High|Normal|Low)", block, re.IGNORECASE)
+            priority = priority_m.group(1).title() if priority_m else "Normal"
             compiled.append({
-                "title": f"[UC - {prefix_code}] - {raw_title}",
+                "case_number": case_number,
+                "title": f"[{case_number}] - {raw_title}",
                 "raw_title": raw_title,
+                "priority": priority,
                 "content": block,
             })
     return compiled

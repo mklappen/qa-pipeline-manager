@@ -12,6 +12,8 @@ from routes.settings import router as settings_router
 from routes.history import router as history_router
 from routes.pipeline import router as pipeline_router
 from routes.upload import router as upload_router
+from routes.usecases import router as usecases_router
+from routes.testcases import router as testcases_router
 
 
 @asynccontextmanager
@@ -26,6 +28,8 @@ app.include_router(settings_router, prefix="/api/settings", tags=["settings"])
 app.include_router(history_router, prefix="/api/history", tags=["history"])
 app.include_router(pipeline_router, prefix="/api/pipeline", tags=["pipeline"])
 app.include_router(upload_router, prefix="/api", tags=["upload"])
+app.include_router(usecases_router, prefix="/api/usecases", tags=["usecases"])
+app.include_router(testcases_router, prefix="/api/testcases", tags=["testcases"])
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

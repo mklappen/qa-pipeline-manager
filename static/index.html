@@ -94,6 +94,33 @@
   .settings-hint  { font-size: .72rem; color: #888; margin-top: .15rem; }
   textarea.prompt-area { font-family: 'Consolas', monospace; font-size: .78rem; resize: vertical; }
 
+  /* ── use case review ── */
+  #uc-edit-area { font-family: 'Consolas', monospace; font-size: .82rem; min-height: 180px; }
+  .uc-original-block {
+    font-family: 'Consolas', monospace; font-size: .76rem; background: #f6f8fa;
+    border: 1px solid #dee2e6; border-radius: 6px; padding: .75rem;
+    white-space: pre-wrap; max-height: 200px; overflow-y: auto; color: #555;
+  }
+  .uc-status-review      { background: #fd7e14; }
+  .uc-status-approved    { background: #198754; }
+  .uc-status-rejected    { background: #dc3545; }
+  .uc-status-superseded  { background: #6c757d; }
+  .uc-status-complete    { background: #0d6efd; }
+  tr.uc-row-superseded td { color: #adb5bd; }
+  tr.uc-row-complete td   { color: #6ea8fe; }
+
+  .priority-critical { background: #dc3545; }
+  .priority-high     { background: #fd7e14; }
+  .priority-normal    { background: #6c757d; }
+  .priority-low       { background: #adb5bd; color: #212529; }
+  select.priority-select {
+    font-size: .72rem; padding: .1rem .4rem; border-radius: .375rem; border: none;
+    color: #fff; font-weight: 600; cursor: pointer;
+  }
+  select.priority-select.priority-critical, select.priority-select.priority-high,
+  select.priority-select.priority-normal { color: #fff; }
+  select.priority-select option { color: #212529; background: #fff; }
+
   /* ── util ── */
   .section-title { font-size: 1.35rem; font-weight: 700; color: #16213e; margin-bottom: 1.25rem; }
   .card { border: none; border-radius: 12px; box-shadow: 0 1px 4px #0001; }
@@ -122,6 +149,18 @@
       <li class="nav-item">
         <button onclick="showPage('history')" id="nav-history">
           <i class="bi bi-clock-history"></i> History
+        </button>
+      </li>
+      <li class="nav-item">
+        <button onclick="showPage('usecases')" id="nav-usecases">
+          <i class="bi bi-card-checklist"></i> Use Cases
+          <span class="badge bg-warning text-dark ms-auto" id="nav-uc-badge" style="display:none;font-size:.65rem"></span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button onclick="showPage('testcases')" id="nav-testcases">
+          <i class="bi bi-clipboard-check"></i> Test Cases
+          <span class="badge bg-warning text-dark ms-auto" id="nav-tc-badge" style="display:none;font-size:.65rem"></span>
         </button>
       </li>
       <li class="nav-item">
@@ -196,11 +235,16 @@
 
       <!-- P5 -->
       <div id="form-usecases" class="d-none">
+        <div class="alert alert-info py-2 px-3 mb-2" style="font-size:.8rem;">
+          <i class="bi bi-info-circle me-1"></i>
+          By default this generates test cases from every <strong>Approved</strong> use case in the Use Cases
+          module. Optionally narrow it to one history run, or paste use case markdown to bypass the module entirely.
+        </div>
         <div class="row g-2 mb-2">
           <div class="col-md-6">
-            <label class="settings-label">Load from History Run</label>
+            <label class="settings-label">Narrow to a History Run <span class="text-muted fw-normal">(optional)</span></label>
             <select class="form-select form-select-sm" id="uc-history-select" onchange="loadUcFromHistory()">
-              <option value="">— select a past use-case run —</option>
+              <option value="">— all Approved use cases (default) —</option>
             </select>
           </div>
           <div class="col-md-6 d-flex align-items-end">
@@ -231,6 +275,14 @@
             <div class="form-check form-switch mb-1">
               <input class="form-check-input" type="checkbox" id="push-to-clickup">
               <label class="form-check-label" for="push-to-clickup" style="font-size:.83rem;">Push to ClickUp</label>
+            </div>
+          </div>
+          <div class="col-md-4 d-flex align-items-end" id="autopilot-toggle-wrap" style="display:none">
+            <div class="form-check form-switch mb-1">
+              <input class="form-check-input" type="checkbox" id="auto-approve-tc">
+              <label class="form-check-label" for="auto-approve-tc" style="font-size:.83rem;">
+                Auto-pilot <span class="text-muted">(auto-approve generated test cases)</span>
+              </label>
             </div>
           </div>
         </div>
@@ -442,9 +494,16 @@
               min="1024" max="32768" step="512">
           </div>
           <div class="col-md-3">
-            <label class="settings-label">Temperature</label>
-            <input type="number" class="form-control form-control-sm" id="s-llm-temperature"
+            <label class="settings-label">Use Case Temperature</label>
+            <input type="number" class="form-control form-control-sm" id="s-llm-use_case_temperature"
               min="0" max="1" step="0.05">
+            <div class="settings-hint">0 = deterministic (recommended for use cases)</div>
+          </div>
+          <div class="col-md-3">
+            <label class="settings-label">Test Case Temperature</label>
+            <input type="number" class="form-control form-control-sm" id="s-llm-test_case_temperature"
+              min="0" max="1" step="0.05">
+            <div class="settings-hint">0.2 = slight variety (recommended for test cases)</div>
           </div>
         </div>
         <div class="mt-2">
@@ -501,7 +560,369 @@
     </div>
   </div>
 
+  <!-- ── USE CASES PAGE ────────────────────────────────────────────────────── -->
+  <div id="page-usecases" class="page">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="section-title mb-0"><i class="bi bi-card-checklist text-primary me-2"></i>Use Cases</div>
+      <button class="btn btn-outline-secondary btn-sm" onclick="loadUseCases()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+      </button>
+    </div>
+
+    <!-- filter tabs -->
+    <ul class="nav nav-tabs mb-0" id="ucFilterTabs">
+      <li class="nav-item">
+        <button class="nav-link active" onclick="filterUC('active')" id="ucf-all">
+          Active <span class="badge bg-secondary ms-1" id="ucf-all-count">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" onclick="filterUC('Ready for Review')" id="ucf-review">
+          Ready for Review <span class="badge bg-warning text-dark ms-1" id="ucf-review-count">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" onclick="filterUC('Approved')" id="ucf-approved">
+          Approved <span class="badge bg-success ms-1" id="ucf-approved-count">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" onclick="filterUC('Rejected')" id="ucf-rejected">
+          Rejected <span class="badge bg-danger ms-1" id="ucf-rejected-count">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" onclick="filterUC('Superseded')" id="ucf-superseded">
+          Superseded <span class="badge bg-secondary ms-1" id="ucf-superseded-count">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" onclick="filterUC('Complete')" id="ucf-complete">
+          Complete <span class="badge bg-primary ms-1" id="ucf-complete-count">0</span>
+        </button>
+      </li>
+    </ul>
+
+    <div class="card border-top-0 rounded-top-0 mb-3">
+      <div id="uc-bulk-bar" style="display:none" class="d-flex align-items-center gap-3 px-3 py-2 border-bottom" style="background:#fff3cd">
+        <span class="small fw-semibold text-dark" id="uc-selected-count"></span>
+        <button class="btn btn-sm btn-danger" onclick="bulkDeleteUC()">
+          <i class="bi bi-trash me-1"></i>Delete Selected
+        </button>
+        <button class="btn btn-sm btn-link text-secondary p-0 text-decoration-none" onclick="clearUCSelection()">Clear</button>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width:36px"><input type="checkbox" class="form-check-input" id="uc-select-all" onchange="toggleAllUC(this)"></th>
+              <th style="width:70px">#</th>
+              <th>Title</th>
+              <th style="width:120px">Priority</th>
+              <th style="width:150px">Status</th>
+              <th style="width:155px">Run Date</th>
+            </tr>
+          </thead>
+          <tbody id="uc-body">
+            <tr><td colspan="6" class="text-center text-muted py-4" id="uc-empty">No use cases yet. Run Pipeline 1 or 4 to generate some.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- detail / review panel -->
+    <div class="card mt-2" id="uc-detail" style="display:none">
+      <div class="card-header d-flex justify-content-between align-items-center bg-white">
+        <strong id="uc-detail-title">Use Case</strong>
+        <div class="d-flex gap-2 align-items-center">
+          <span id="uc-priority-wrap"></span>
+          <span class="badge" id="uc-status-badge"></span>
+          <button class="btn btn-sm btn-link text-secondary" onclick="document.getElementById('uc-detail').style.display='none'">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+
+        <!-- original text (collapsed) -->
+        <div class="mb-3">
+          <button class="btn btn-link btn-sm text-secondary p-0 text-decoration-none"
+            data-bs-toggle="collapse" data-bs-target="#uc-original-collapse">
+            <i class="bi bi-chevron-down me-1"></i>View original generated text
+          </button>
+          <div class="collapse mt-2" id="uc-original-collapse">
+            <div class="uc-original-block" id="uc-original-text"></div>
+          </div>
+        </div>
+
+        <!-- editable current text -->
+        <div class="mb-3">
+          <label class="settings-label">Use Case Text <span class="text-muted fw-normal">(edit before approving)</span></label>
+          <textarea class="form-control form-control-sm prompt-area mt-1" id="uc-edit-area" rows="10"></textarea>
+        </div>
+
+        <!-- rejection reason display (shown when status is Rejected) -->
+        <div class="alert alert-danger py-2 px-3 mb-3" id="uc-rejection-display" style="display:none">
+          <strong><i class="bi bi-x-circle me-1"></i>Rejection reason:</strong>
+          <div class="mt-1 small" id="uc-rejection-text"></div>
+          <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+            <button class="btn btn-warning btn-sm" id="uc-regen-btn" onclick="regenerateUseCase()">
+              <i class="bi bi-arrow-clockwise me-1"></i>Regenerate this use case
+            </button>
+            <div class="spinner-border spinner-border-sm text-warning" id="uc-regen-spinner" style="display:none"></div>
+            <small class="text-muted" id="uc-regen-status"></small>
+          </div>
+        </div>
+
+        <!-- action buttons -->
+        <div class="d-flex gap-2 flex-wrap align-items-center" id="uc-action-buttons">
+          <button class="btn btn-success btn-sm" onclick="approveUseCase()">
+            <i class="bi bi-check-lg me-1"></i>Approve
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="showRejectForm()">
+            <i class="bi bi-x-lg me-1"></i>Reject
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="saveDraftUC()">
+            <i class="bi bi-floppy me-1"></i>Save Draft
+          </button>
+          <button class="btn btn-primary btn-sm" id="uc-push-btn" onclick="pushUCToClickUp()" style="display:none">
+            <i class="bi bi-cloud-upload me-1"></i>Push to ClickUp
+          </button>
+          <div class="spinner-border spinner-border-sm text-primary" id="uc-push-spinner" style="display:none"></div>
+          <button class="btn btn-outline-danger btn-sm ms-auto" onclick="deleteUseCase()">
+            <i class="bi bi-trash me-1"></i>Delete
+          </button>
+        </div>
+
+        <!-- rejection form (hidden until Reject clicked) -->
+        <div class="mt-3 p-3 border rounded bg-light" id="uc-reject-form" style="display:none">
+          <label class="settings-label">Rejection Reason <span class="text-danger">*</span></label>
+          <div class="settings-hint mb-1">This feedback is stored and used to improve future use case generation.</div>
+          <textarea class="form-control form-control-sm" id="uc-reject-reason" rows="3"
+            placeholder="Explain what needs to change and why this use case is being rejected…"></textarea>
+          <div class="d-flex gap-2 mt-2">
+            <button class="btn btn-danger btn-sm" onclick="submitRejection()">
+              <i class="bi bi-x-circle me-1"></i>Submit Rejection
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="hideRejectForm()">Cancel</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TEST CASES PAGE ─────────────────────────────────────────────────────── -->
+  <div id="page-testcases" class="page">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="section-title mb-0"><i class="bi bi-clipboard-check text-primary me-2"></i>Test Cases</div>
+      <div class="d-flex gap-2 align-items-center">
+        <button class="btn btn-outline-success btn-sm" onclick="exportTC()" id="tc-export-btn">
+          <i class="bi bi-file-earmark-excel me-1"></i>Export to Excel
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadTestCases()">
+          <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </button>
+      </div>
+    </div>
+
+    <!-- filter tabs -->
+    <ul class="nav nav-tabs mb-0" id="tcFilterTabs">
+      <li class="nav-item">
+        <button class="nav-link active" onclick="filterTC('active')" id="tcf-all">
+          Active <span class="badge bg-secondary ms-1" id="tcf-all-count">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" onclick="filterTC('Ready for Review')" id="tcf-review">
+          Ready for Review <span class="badge bg-warning text-dark ms-1" id="tcf-review-count">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" onclick="filterTC('Approved')" id="tcf-approved">
+          Approved <span class="badge bg-success ms-1" id="tcf-approved-count">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" onclick="filterTC('Rejected')" id="tcf-rejected">
+          Rejected <span class="badge bg-danger ms-1" id="tcf-rejected-count">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" onclick="filterTC('Complete')" id="tcf-complete">
+          Complete <span class="badge bg-primary ms-1" id="tcf-complete-count">0</span>
+        </button>
+      </li>
+    </ul>
+
+    <div class="card border-top-0 rounded-top-0 mb-3">
+      <div id="tc-bulk-bar" style="display:none" class="d-flex align-items-center gap-3 px-3 py-2 border-bottom">
+        <span class="small fw-semibold text-dark" id="tc-selected-count"></span>
+        <button class="btn btn-sm btn-success" onclick="exportTC(true)">
+          <i class="bi bi-file-earmark-excel me-1"></i>Export Selected
+        </button>
+        <button class="btn btn-sm btn-danger" onclick="bulkDeleteTC()">
+          <i class="bi bi-trash me-1"></i>Delete Selected
+        </button>
+        <button class="btn btn-sm btn-link text-secondary p-0 text-decoration-none" onclick="clearTCSelection()">Clear</button>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width:36px"><input type="checkbox" class="form-check-input" id="tc-select-all" onchange="toggleAllTC(this)"></th>
+              <th style="width:50px">#</th>
+              <th style="width:65px">Prefix</th>
+              <th>Title</th>
+              <th style="width:110px">Use Case Ref</th>
+              <th style="width:100px">UC Priority</th>
+              <th style="width:150px">Status</th>
+              <th style="width:155px">Run Date</th>
+            </tr>
+          </thead>
+          <tbody id="tc-body">
+            <tr><td colspan="8" class="text-center text-muted py-4">No test cases yet. Run Pipeline 2, 3, or 5 to generate some.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- detail / review panel -->
+    <div class="card mt-2" id="tc-detail" style="display:none">
+      <div class="card-header d-flex justify-content-between align-items-center bg-white">
+        <strong id="tc-detail-title">Test Case</strong>
+        <div class="d-flex gap-2 align-items-center">
+          <span id="tc-priority-badge"></span>
+          <span class="badge" id="tc-status-badge"></span>
+          <button class="btn btn-sm btn-link text-secondary" onclick="document.getElementById('tc-detail').style.display='none'">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+
+        <!-- original text (collapsed) -->
+        <div class="mb-3">
+          <button class="btn btn-link btn-sm text-secondary p-0 text-decoration-none"
+            data-bs-toggle="collapse" data-bs-target="#tc-original-collapse">
+            <i class="bi bi-chevron-down me-1"></i>View original generated text
+          </button>
+          <div class="collapse mt-2" id="tc-original-collapse">
+            <div class="uc-original-block" id="tc-original-text"></div>
+          </div>
+        </div>
+
+        <!-- editable current text -->
+        <div class="mb-3">
+          <label class="settings-label">Test Case Text <span class="text-muted fw-normal">(edit before approving)</span></label>
+          <textarea class="form-control form-control-sm prompt-area mt-1" id="tc-edit-area" rows="12"
+            style="font-family:'Consolas',monospace;font-size:.82rem;min-height:200px"></textarea>
+        </div>
+
+        <!-- rejection reason display (shown when status is Rejected) -->
+        <div class="alert alert-danger py-2 px-3 mb-3" id="tc-rejection-display" style="display:none">
+          <strong><i class="bi bi-x-circle me-1"></i>Rejection reason:</strong>
+          <div class="mt-1 small" id="tc-rejection-text"></div>
+          <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+            <button class="btn btn-warning btn-sm" id="tc-regen-btn" onclick="regenerateTestCase()">
+              <i class="bi bi-arrow-clockwise me-1"></i>Regenerate this test case
+            </button>
+            <div class="spinner-border spinner-border-sm text-warning" id="tc-regen-spinner" style="display:none"></div>
+            <small class="text-muted" id="tc-regen-status"></small>
+          </div>
+        </div>
+
+        <!-- action buttons -->
+        <div class="d-flex gap-2 flex-wrap align-items-center" id="tc-action-buttons">
+          <button class="btn btn-success btn-sm" onclick="approveTestCase()">
+            <i class="bi bi-check-lg me-1"></i>Approve
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="showTCRejectForm()">
+            <i class="bi bi-x-lg me-1"></i>Reject
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="saveDraftTC()">
+            <i class="bi bi-floppy me-1"></i>Save Draft
+          </button>
+          <button class="btn btn-primary btn-sm" id="tc-push-btn" onclick="pushTCToClickUp()" style="display:none">
+            <i class="bi bi-cloud-upload me-1"></i>Push to ClickUp
+          </button>
+          <div class="spinner-border spinner-border-sm text-primary" id="tc-push-spinner" style="display:none"></div>
+          <button class="btn btn-outline-danger btn-sm ms-auto" onclick="deleteTestCase()">
+            <i class="bi bi-trash me-1"></i>Delete
+          </button>
+        </div>
+
+        <!-- rejection form (hidden until Reject clicked) -->
+        <div class="mt-3 p-3 border rounded bg-light" id="tc-reject-form" style="display:none">
+          <label class="settings-label">Rejection Reason <span class="text-danger">*</span></label>
+          <div class="settings-hint mb-1">This feedback is stored and used to improve future test case generation.</div>
+          <textarea class="form-control form-control-sm" id="tc-reject-reason" rows="3"
+            placeholder="Explain what needs to change and why this test case is being rejected…"></textarea>
+          <div class="d-flex gap-2 mt-2">
+            <button class="btn btn-danger btn-sm" onclick="submitTCRejection()">
+              <i class="bi bi-x-circle me-1"></i>Submit Rejection
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="hideTCRejectForm()">Cancel</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
 </div><!-- /#main -->
+
+<!-- ── CONFIRMATION MODAL ──────────────────────────────────────────────────── -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>Confirm Delete</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-modal-message" class="mb-0 small"></p>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-danger btn-sm" id="confirm-modal-ok">
+          <i class="bi bi-trash me-1"></i>Delete
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── DUPLICATE DETECTION MODAL ──────────────────────────────────────────── -->
+<div class="modal fade" id="duplicateModal" tabindex="-1" aria-labelledby="duplicateModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="duplicateModalLabel">
+          <i class="bi bi-search me-2"></i>Similar Requirements Found
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p id="dup-message" class="mb-3"></p>
+        <div class="alert alert-secondary py-2 px-3 small mb-0" id="dup-details">
+          <div><strong>Previous run:</strong> <span id="dup-run-name"></span></div>
+          <div><strong>Date:</strong> <span id="dup-run-date"></span></div>
+          <div><strong>Similarity:</strong> <span id="dup-similarity"></span></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="proceedWithRun()" data-bs-dismiss="modal">
+          <i class="bi bi-plus-circle me-1"></i>Create New Set
+        </button>
+        <button class="btn btn-outline-secondary" onclick="viewExistingFromDuplicate()" data-bs-dismiss="modal">
+          <i class="bi bi-card-checklist me-1"></i>View Existing Use Cases
+        </button>
+        <button class="btn btn-link text-secondary" data-bs-dismiss="modal">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
@@ -516,14 +937,47 @@ let currentHistoryMd = '';
 let currentHistoryTitle = '';
 let currentRunId = null;
 
+// ── priority helpers (shared by use cases + test cases) ──────────────────────
+const PRIORITIES = ['Critical', 'High', 'Normal', 'Low'];
+
+function _priorityCls(priority) {
+  return 'priority-' + (priority || 'Normal').toLowerCase();
+}
+
+function _priorityBadge(priority) {
+  return `<span class="badge ${_priorityCls(priority)}">${priority || 'Normal'}</span>`;
+}
+
+function _prioritySelectHtml(ucId, priority) {
+  const opts = PRIORITIES.map(p => `<option value="${p}" ${p === (priority || 'Normal') ? 'selected' : ''}>${p}</option>`).join('');
+  return `<select class="form-select form-select-sm priority-select ${_priorityCls(priority)}"
+            onclick="event.stopPropagation()" onchange="changeUCPriority(${ucId}, this)">${opts}</select>`;
+}
+
+async function changeUCPriority(ucId, sel) {
+  const priority = sel.value;
+  try {
+    await apiFetch('/api/usecases/' + ucId + '/priority', { method: 'PUT', body: JSON.stringify({ priority }) });
+    const uc = _allUC.find(u => u.id === ucId);
+    if (uc) uc.priority = priority;
+    sel.classList.remove(...PRIORITIES.map(_priorityCls));
+    sel.classList.add(_priorityCls(priority));
+  } catch (e) {
+    alert('Failed to update priority: ' + e.message);
+    sel.value = (_allUC.find(u => u.id === ucId) || {}).priority || 'Normal';
+  }
+}
+
 // ── page navigation ───────────────────────────────────────────────────────────
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
   document.querySelectorAll('#sidebar nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('nav-' + name).classList.add('active');
-  if (name === 'history') loadHistory();
-  if (name === 'settings') loadSettings();
+  if (name === 'history')    return loadHistory();
+  if (name === 'settings')   return loadSettings();
+  if (name === 'usecases')   return loadUseCases();
+  if (name === 'testcases')  return loadTestCases();
 }
 
 // ── pipeline type selector ────────────────────────────────────────────────────
@@ -537,6 +991,7 @@ function selectPipeline(type) {
   document.getElementById('form-usecases').classList.add('d-none');
   document.getElementById('form-p2-notice').classList.add('d-none');
   document.getElementById('push-toggle-wrap').style.display = '';
+  document.getElementById('autopilot-toggle-wrap').style.display = 'none';
 
   if (type === 1 || type === 3) {
     document.getElementById('form-remote').classList.remove('d-none');
@@ -549,6 +1004,9 @@ function selectPipeline(type) {
     document.getElementById('form-usecases').classList.remove('d-none');
     document.getElementById('push-toggle-wrap').style.display = 'none';
     loadUcHistoryOptions();
+  }
+  if (type === 2 || type === 3 || type === 5) {
+    document.getElementById('autopilot-toggle-wrap').style.display = '';
   }
 }
 
@@ -608,10 +1066,54 @@ async function loadUcFromHistory() {
 }
 
 // ── run pipeline ──────────────────────────────────────────────────────────────
+let _pendingPayload = null;
+let _dupExistingRunId = null;
+
 async function runPipeline() {
   const payload = buildPayload();
   if (!payload) return;
 
+  // Duplicate detection for P4 (text input)
+  if (payload.pipeline_type === 4 && payload.requirements_text) {
+    try {
+      const dup = await apiFetch('/api/usecases/check-duplicate', {
+        method: 'POST',
+        body: JSON.stringify({ text: payload.requirements_text }),
+      });
+      if (dup.match === 'exact' || dup.match === 'similar') {
+        _pendingPayload = payload;
+        _dupExistingRunId = dup.run_id;
+        const pct = Math.round((dup.similarity || 0) * 100);
+        document.getElementById('dup-message').textContent = dup.match === 'exact'
+          ? 'This requirements document has been processed before (exact match). Do you want to create a new set of use cases anyway?'
+          : `A similar requirements document was processed before (${pct}% match). Do you want to create a new set anyway?`;
+        document.getElementById('dup-run-name').textContent = dup.pipeline_name || '—';
+        document.getElementById('dup-run-date').textContent = (dup.created_at || '').replace('T', ' ').substring(0, 16);
+        document.getElementById('dup-similarity').textContent = dup.match === 'exact' ? '100% (exact)' : pct + '%';
+        new bootstrap.Modal(document.getElementById('duplicateModal')).show();
+        return;
+      }
+    } catch (_) { /* if check fails, proceed normally */ }
+  }
+
+  await _startPipelineRun(payload);
+
+}
+
+function proceedWithRun() {
+  if (_pendingPayload) {
+    _startPipelineRun(_pendingPayload);
+    _pendingPayload = null;
+  }
+}
+
+async function viewExistingFromDuplicate() {
+  _pendingPayload = null;
+  await showPage('usecases');
+  if (_dupExistingRunId) filterUCByRun(_dupExistingRunId);
+}
+
+async function _startPipelineRun(payload) {
   document.getElementById('output-area').style.display = '';
   document.getElementById('log-output').innerHTML = '';
   document.getElementById('result-output').innerHTML = '';
@@ -665,6 +1167,7 @@ function buildPayload() {
   const base = {
     pipeline_type: t,
     push_to_clickup: document.getElementById('push-to-clickup').checked,
+    auto_approve_test_cases: document.getElementById('auto-approve-tc').checked,
     prefix_override: document.getElementById('prefix-override').value.trim() || null,
     system_prompt_override: document.getElementById('sys-prompt-override').value.trim() || null,
   };
@@ -684,7 +1187,7 @@ function buildPayload() {
   if (t === 5) {
     const txt   = document.getElementById('uc-text').value.trim();
     const runId = parseInt(document.getElementById('uc-history-select').value) || null;
-    if (!txt && !runId) { alert('Paste use case text or select a history run.'); return null; }
+    // Leave both blank to pull all Approved use cases straight from the Use Cases module.
     return { ...base, use_case_text: txt || null, use_case_run_id: runId };
   }
   return base;
@@ -795,7 +1298,7 @@ async function viewHistoryRun(id, name, pipelineType) {
 
 async function deleteRun(id, event) {
   event.stopPropagation();
-  if (!confirm(`Delete run #${id}?`)) return;
+  if (!await confirmDialog(`Delete run #${id} from history?`)) return;
   await apiFetch('/api/history/' + id, { method: 'DELETE' });
   loadHistory();
 }
@@ -849,7 +1352,8 @@ async function loadSettings() {
     setVal('s-llm-llm_model',                llm.llm_model || '');
     setVal('s-llm-llm_api_key',              llm.llm_api_key || '');
     setVal('s-llm-max_tokens',               llm.max_tokens || '8192');
-    setVal('s-llm-temperature',              llm.temperature || '0.2');
+    setVal('s-llm-use_case_temperature',     llm.use_case_temperature || '0');
+    setVal('s-llm-test_case_temperature',    llm.test_case_temperature || '0.2');
     setVal('s-llm-use_case_system_prompt',   llm.use_case_system_prompt || '');
     setVal('s-llm-test_case_system_prompt',  llm.test_case_system_prompt || '');
     setVal('s-confluence-url',               conf.url || '');
@@ -872,7 +1376,8 @@ async function saveSettings() {
         llm_model:               getVal('s-llm-llm_model'),
         llm_api_key:             getVal('s-llm-llm_api_key'),
         max_tokens:              getVal('s-llm-max_tokens'),
-        temperature:             getVal('s-llm-temperature'),
+        use_case_temperature:    getVal('s-llm-use_case_temperature'),
+        test_case_temperature:   getVal('s-llm-test_case_temperature'),
         use_case_system_prompt:  getVal('s-llm-use_case_system_prompt'),
         test_case_system_prompt: getVal('s-llm-test_case_system_prompt'),
       },
@@ -914,8 +1419,637 @@ async function apiFetch(url, opts = {}) {
 function setVal(id, val) { const el = document.getElementById(id); if (el) el.value = val; }
 function getVal(id)      { const el = document.getElementById(id); return el ? el.value : ''; }
 
+// ── confirmation dialog ───────────────────────────────────────────────────────
+function confirmDialog(message) {
+  return new Promise(resolve => {
+    document.getElementById('confirm-modal-message').textContent = message;
+    const modalEl = document.getElementById('confirmModal');
+    const modal = new bootstrap.Modal(modalEl);
+    let confirmed = false;
+    document.getElementById('confirm-modal-ok').addEventListener('click', () => {
+      confirmed = true;
+      modal.hide();
+    }, { once: true });
+    modalEl.addEventListener('hidden.bs.modal', () => resolve(confirmed), { once: true });
+    modal.show();
+  });
+}
+
+// ── use case review page ──────────────────────────────────────────────────────
+let _allUC = [];
+let _currentUCFilter = 'active';
+let _currentUCId = null;
+let _selectedUCIds = new Set();
+
+const _UC_TABS = { active: 'ucf-all', 'Ready for Review': 'ucf-review', Approved: 'ucf-approved', Rejected: 'ucf-rejected', Superseded: 'ucf-superseded', Complete: 'ucf-complete' };
+
+async function loadUseCases() {
+  const body = document.getElementById('uc-body');
+  body.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Loading…</td></tr>';
+  document.getElementById('uc-detail').style.display = 'none';
+  _selectedUCIds.clear();
+  try {
+    _allUC = await apiFetch('/api/usecases');
+    _updateUCCounts();
+    filterUC(_currentUCFilter);
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6" class="text-danger text-center py-3">${e.message}</td></tr>`;
+  }
+}
+
+function _updateUCCounts() {
+  const counts = { active: 0, 'Ready for Review': 0, Approved: 0, Rejected: 0, Superseded: 0, Complete: 0 };
+  _allUC.forEach(uc => {
+    if (uc.status !== 'Superseded' && uc.status !== 'Complete') counts.active++;
+    if (counts[uc.status] !== undefined) counts[uc.status]++;
+  });
+  document.getElementById('ucf-all-count').textContent = counts.active;
+  document.getElementById('ucf-review-count').textContent = counts['Ready for Review'];
+  document.getElementById('ucf-approved-count').textContent = counts.Approved;
+  document.getElementById('ucf-rejected-count').textContent = counts.Rejected;
+  document.getElementById('ucf-superseded-count').textContent = counts.Superseded;
+  document.getElementById('ucf-complete-count').textContent = counts.Complete;
+  const badge = document.getElementById('nav-uc-badge');
+  badge.textContent = counts['Ready for Review'];
+  badge.style.display = counts['Ready for Review'] > 0 ? '' : 'none';
+}
+
+function filterUC(status) {
+  _currentUCFilter = status;
+  _selectedUCIds.clear();
+  Object.entries(_UC_TABS).forEach(([k, id]) => {
+    document.getElementById(id).classList.toggle('active', k === status);
+  });
+  const filtered = status === 'active'
+    ? _allUC.filter(uc => uc.status !== 'Superseded' && uc.status !== 'Complete')
+    : _allUC.filter(uc => uc.status === status);
+  _renderUCTable(filtered);
+  document.getElementById('uc-detail').style.display = 'none';
+  _updateUCBulkBar();
+}
+
+function filterUCByRun(runId) {
+  _currentUCFilter = 'active';
+  Object.entries(_UC_TABS).forEach(([k, id]) => {
+    document.getElementById(id).classList.toggle('active', k === 'active');
+  });
+  _renderUCTable(_allUC.filter(uc => uc.run_id === runId && uc.status !== 'Superseded'));
+}
+
+function _renderUCTable(rows) {
+  const body = document.getElementById('uc-body');
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No use cases found.</td></tr>';
+    _updateUCBulkBar();
+    return;
+  }
+  body.innerHTML = '';
+  rows.forEach(uc => {
+    const statusCls =
+      uc.status === 'Approved'    ? 'uc-status-approved' :
+      uc.status === 'Rejected'    ? 'uc-status-rejected'  :
+      uc.status === 'Superseded'  ? 'uc-status-superseded' :
+      uc.status === 'Complete'    ? 'uc-status-complete' :
+                                    'uc-status-review';
+    const date = (uc.run_date || '').replace('T', ' ').substring(0, 16);
+    const checked = _selectedUCIds.has(uc.id) ? 'checked' : '';
+    const tr = document.createElement('tr');
+    tr.className = 'history-row' +
+      (uc.status === 'Superseded' ? ' uc-row-superseded' : '') +
+      (uc.status === 'Complete'   ? ' uc-row-complete'   : '');
+    tr.innerHTML = `
+      <td onclick="event.stopPropagation()">
+        <input type="checkbox" class="form-check-input uc-row-check" value="${uc.id}" ${checked}
+          onchange="toggleUCSelection(${uc.id}, this)">
+      </td>
+      <td class="text-muted small"><span class="badge bg-secondary">${uc.case_number || uc.prefix_code || '#' + uc.id}</span></td>
+      <td style="font-size:.83rem">${uc.title || '(untitled)'}</td>
+      <td onclick="event.stopPropagation()">${_prioritySelectHtml(uc.id, uc.priority)}</td>
+      <td><span class="badge ${statusCls}">${uc.status}</span></td>
+      <td class="text-muted small">${date}</td>`;
+    tr.addEventListener('click', () => openUCDetail(uc.id));
+    body.appendChild(tr);
+  });
+  _updateUCBulkBar();
+}
+
+async function openUCDetail(ucId) {
+  try {
+    const uc = await apiFetch('/api/usecases/' + ucId);
+    _currentUCId = ucId;
+    document.getElementById('uc-detail-title').textContent = `[${uc.case_number || uc.prefix_code}] ${uc.title}`;
+    document.getElementById('uc-priority-wrap').innerHTML = _prioritySelectHtml(uc.id, uc.priority);
+    document.getElementById('uc-original-text').textContent = uc.original_text || '';
+    document.getElementById('uc-edit-area').value = uc.current_text || '';
+    document.getElementById('uc-reject-form').style.display = 'none';
+    document.getElementById('uc-reject-reason').value = '';
+
+    const badge = document.getElementById('uc-status-badge');
+    const statusCls =
+      uc.status === 'Approved'  ? 'uc-status-approved'   :
+      uc.status === 'Rejected'  ? 'uc-status-rejected'   :
+      uc.status === 'Complete'  ? 'uc-status-complete'   :
+      uc.status === 'Superseded'? 'uc-status-superseded' :
+                                   'uc-status-review';
+    badge.className = `badge ${statusCls}`;
+    badge.textContent = uc.status;
+    document.getElementById('uc-push-btn').style.display = uc.status === 'Approved' ? '' : 'none';
+    document.getElementById('uc-push-btn').disabled = false;
+    document.getElementById('uc-push-spinner').style.display = 'none';
+
+    const rejDisplay = document.getElementById('uc-rejection-display');
+    if (uc.status === 'Rejected' && uc.rejection_reason) {
+      document.getElementById('uc-rejection-text').textContent = uc.rejection_reason;
+      rejDisplay.style.display = '';
+    } else {
+      rejDisplay.style.display = 'none';
+    }
+    document.getElementById('uc-regen-btn').disabled = false;
+    document.getElementById('uc-regen-status').textContent = '';
+    document.getElementById('uc-regen-spinner').style.display = 'none';
+
+    document.getElementById('uc-detail').style.display = '';
+    document.getElementById('uc-detail').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) { alert('Failed to load use case: ' + e.message); }
+}
+
+async function saveDraftUC() {
+  if (!_currentUCId) return;
+  const text = document.getElementById('uc-edit-area').value;
+  try {
+    await apiFetch('/api/usecases/' + _currentUCId, { method: 'PUT', body: JSON.stringify({ current_text: text }) });
+    // Update local cache
+    const uc = _allUC.find(u => u.id === _currentUCId);
+    if (uc) uc.current_text = text;
+  } catch (e) { alert('Save failed: ' + e.message); }
+}
+
+async function approveUseCase() {
+  if (!_currentUCId) return;
+  const text = document.getElementById('uc-edit-area').value;
+  try {
+    await apiFetch('/api/usecases/' + _currentUCId + '/approve', { method: 'POST', body: JSON.stringify({ current_text: text }) });
+    const uc = _allUC.find(u => u.id === _currentUCId);
+    if (uc) { uc.status = 'Approved'; uc.current_text = text; }
+    _updateUCCounts();
+    openUCDetail(_currentUCId);
+  } catch (e) { alert('Approval failed: ' + e.message); }
+}
+
+function showRejectForm() {
+  document.getElementById('uc-reject-form').style.display = '';
+  document.getElementById('uc-reject-reason').focus();
+}
+
+function hideRejectForm() {
+  document.getElementById('uc-reject-form').style.display = 'none';
+  document.getElementById('uc-reject-reason').value = '';
+}
+
+async function regenerateUseCase() {
+  if (!_currentUCId) return;
+  const btn     = document.getElementById('uc-regen-btn');
+  const spinner = document.getElementById('uc-regen-spinner');
+  const status  = document.getElementById('uc-regen-status');
+  btn.disabled = true;
+  spinner.style.display = '';
+  status.textContent = 'Sending to LLM…';
+  try {
+    const result = await apiFetch('/api/usecases/' + _currentUCId + '/regenerate', { method: 'POST' });
+    const uc = _allUC.find(u => u.id === _currentUCId);
+    if (uc) { uc.status = 'Ready for Review'; uc.current_text = result.new_text; uc.rejection_reason = null; }
+    _updateUCCounts();
+    filterUC(_currentUCFilter);
+    await openUCDetail(_currentUCId);
+  } catch (e) {
+    status.textContent = 'Failed: ' + e.message;
+    btn.disabled = false;
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+async function submitRejection() {
+  if (!_currentUCId) return;
+  const reason = document.getElementById('uc-reject-reason').value.trim();
+  if (!reason) { alert('Please enter a rejection reason.'); return; }
+  try {
+    await apiFetch('/api/usecases/' + _currentUCId + '/reject', { method: 'POST', body: JSON.stringify({ reason }) });
+    const uc = _allUC.find(u => u.id === _currentUCId);
+    if (uc) { uc.status = 'Rejected'; uc.rejection_reason = reason; }
+    _updateUCCounts();
+    hideRejectForm();
+    openUCDetail(_currentUCId);
+  } catch (e) { alert('Rejection failed: ' + e.message); }
+}
+
+function toggleAllUC(cb) {
+  document.querySelectorAll('.uc-row-check').forEach(c => {
+    c.checked = cb.checked;
+    const id = parseInt(c.value);
+    if (cb.checked) _selectedUCIds.add(id); else _selectedUCIds.delete(id);
+  });
+  _updateUCBulkBar();
+}
+
+function toggleUCSelection(id, cb) {
+  if (cb.checked) _selectedUCIds.add(id); else _selectedUCIds.delete(id);
+  _updateUCBulkBar();
+}
+
+function _updateUCBulkBar() {
+  const count = _selectedUCIds.size;
+  document.getElementById('uc-bulk-bar').style.display = count > 0 ? '' : 'none';
+  document.getElementById('uc-selected-count').textContent = `${count} item${count !== 1 ? 's' : ''} selected`;
+  const allChecks = document.querySelectorAll('.uc-row-check');
+  const sa = document.getElementById('uc-select-all');
+  if (sa && allChecks.length) {
+    const n = [...allChecks].filter(c => c.checked).length;
+    sa.checked = n === allChecks.length;
+    sa.indeterminate = n > 0 && n < allChecks.length;
+  }
+}
+
+function clearUCSelection() {
+  _selectedUCIds.clear();
+  document.querySelectorAll('.uc-row-check').forEach(c => c.checked = false);
+  const sa = document.getElementById('uc-select-all');
+  if (sa) { sa.checked = false; sa.indeterminate = false; }
+  _updateUCBulkBar();
+}
+
+async function bulkDeleteUC() {
+  const count = _selectedUCIds.size;
+  if (!count) return;
+  if (!await confirmDialog(`Delete ${count} use case${count !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+  const ids = [..._selectedUCIds];
+  try {
+    await apiFetch('/api/usecases/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) });
+    _allUC = _allUC.filter(u => !ids.includes(u.id));
+    _selectedUCIds.clear();
+    if (_currentUCId && ids.includes(_currentUCId)) {
+      document.getElementById('uc-detail').style.display = 'none';
+      _currentUCId = null;
+    }
+    _updateUCCounts();
+    filterUC(_currentUCFilter);
+  } catch (e) { alert('Bulk delete failed: ' + e.message); }
+}
+
+async function deleteUseCase() {
+  if (!_currentUCId) return;
+  if (!await confirmDialog('Delete this use case? This cannot be undone.')) return;
+  try {
+    await apiFetch('/api/usecases/' + _currentUCId, { method: 'DELETE' });
+    _allUC = _allUC.filter(u => u.id !== _currentUCId);
+    _currentUCId = null;
+    document.getElementById('uc-detail').style.display = 'none';
+    _updateUCCounts();
+    filterUC(_currentUCFilter);
+  } catch (e) { alert('Delete failed: ' + e.message); }
+}
+
+async function pushUCToClickUp() {
+  if (!_currentUCId) return;
+  const btn     = document.getElementById('uc-push-btn');
+  const spinner = document.getElementById('uc-push-spinner');
+  btn.disabled = true;
+  spinner.style.display = '';
+  try {
+    await apiFetch('/api/usecases/' + _currentUCId + '/push-clickup', { method: 'POST' });
+    const uc = _allUC.find(u => u.id === _currentUCId);
+    if (uc) uc.status = 'Complete';
+    _updateUCCounts();
+    filterUC(_currentUCFilter);
+    openUCDetail(_currentUCId);
+  } catch (e) {
+    alert('Push to ClickUp failed: ' + e.message);
+    btn.disabled = false;
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+// ── test case review page ─────────────────────────────────────────────────────
+let _allTC = [];
+let _currentTCFilter = 'active';
+let _currentTCId = null;
+let _selectedTCIds = new Set();
+
+const _TC_TABS = { active: 'tcf-all', 'Ready for Review': 'tcf-review', Approved: 'tcf-approved', Rejected: 'tcf-rejected', Complete: 'tcf-complete' };
+
+async function loadTestCases() {
+  const body = document.getElementById('tc-body');
+  body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Loading…</td></tr>';
+  document.getElementById('tc-detail').style.display = 'none';
+  _selectedTCIds.clear();
+  try {
+    _allTC = await apiFetch('/api/testcases');
+    _updateTCCounts();
+    filterTC(_currentTCFilter);
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="8" class="text-danger text-center py-3">${e.message}</td></tr>`;
+  }
+}
+
+function _updateTCCounts() {
+  const counts = { active: 0, 'Ready for Review': 0, Approved: 0, Rejected: 0, Complete: 0 };
+  _allTC.forEach(tc => {
+    if (tc.status !== 'Complete') counts.active++;
+    if (counts[tc.status] !== undefined) counts[tc.status]++;
+  });
+  document.getElementById('tcf-all-count').textContent = counts.active;
+  document.getElementById('tcf-review-count').textContent = counts['Ready for Review'];
+  document.getElementById('tcf-approved-count').textContent = counts.Approved;
+  document.getElementById('tcf-rejected-count').textContent = counts.Rejected;
+  document.getElementById('tcf-complete-count').textContent = counts.Complete;
+  const badge = document.getElementById('nav-tc-badge');
+  badge.textContent = counts['Ready for Review'];
+  badge.style.display = counts['Ready for Review'] > 0 ? '' : 'none';
+}
+
+function _filteredTC(status) {
+  return status === 'active'
+    ? _allTC.filter(tc => tc.status !== 'Complete')
+    : _allTC.filter(tc => tc.status === status);
+}
+
+function filterTC(status) {
+  _currentTCFilter = status;
+  _selectedTCIds.clear();
+  Object.entries(_TC_TABS).forEach(([k, id]) => {
+    document.getElementById(id).classList.toggle('active', k === status);
+  });
+  _renderTCTable(_filteredTC(status));
+  document.getElementById('tc-detail').style.display = 'none';
+  _updateTCBulkBar();
+}
+
+async function exportTC(selectedOnly) {
+  const ids = selectedOnly ? [..._selectedTCIds] : _filteredTC(_currentTCFilter).map(tc => tc.id);
+  if (!ids.length) { alert('No test cases to export.'); return; }
+  const btn = document.getElementById('tc-export-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/testcases/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `test_cases_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('Export failed: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _renderTCTable(rows) {
+  const body = document.getElementById('tc-body');
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No test cases found.</td></tr>';
+    _updateTCBulkBar();
+    return;
+  }
+  body.innerHTML = '';
+  rows.forEach(tc => {
+    const statusCls =
+      tc.status === 'Approved' ? 'uc-status-approved' :
+      tc.status === 'Rejected' ? 'uc-status-rejected'  :
+      tc.status === 'Complete' ? 'uc-status-complete'  :
+                                  'uc-status-review';
+    const date = (tc.run_date || '').replace('T', ' ').substring(0, 16);
+    const ucRef = (tc.use_case_ref || '').substring(0, 40) + ((tc.use_case_ref || '').length > 40 ? '…' : '');
+    const checked = _selectedTCIds.has(tc.id) ? 'checked' : '';
+    const tr = document.createElement('tr');
+    tr.className = 'history-row';
+    tr.innerHTML = `
+      <td onclick="event.stopPropagation()">
+        <input type="checkbox" class="form-check-input tc-row-check" value="${tc.id}" ${checked}
+          onchange="toggleTCSelection(${tc.id}, this)">
+      </td>
+      <td class="text-muted small">#${tc.id}</td>
+      <td><span class="badge bg-secondary">${tc.prefix_code || '—'}</span></td>
+      <td style="font-size:.83rem">${tc.title || '(untitled)'}</td>
+      <td class="text-muted small" style="font-size:.76rem">${ucRef || '—'}</td>
+      <td>${_priorityBadge(tc.use_case_priority)}</td>
+      <td><span class="badge ${statusCls}">${tc.status}</span></td>
+      <td class="text-muted small">${date}</td>`;
+    tr.addEventListener('click', () => openTCDetail(tc.id));
+    body.appendChild(tr);
+  });
+  _updateTCBulkBar();
+}
+
+async function openTCDetail(tcId) {
+  try {
+    const tc = await apiFetch('/api/testcases/' + tcId);
+    _currentTCId = tcId;
+    document.getElementById('tc-detail-title').textContent = `[${tc.prefix_code}] ${tc.title}`;
+    document.getElementById('tc-priority-badge').innerHTML = _priorityBadge(tc.use_case_priority);
+    document.getElementById('tc-original-text').textContent = tc.original_text || '';
+    document.getElementById('tc-edit-area').value = tc.current_text || '';
+    document.getElementById('tc-reject-form').style.display = 'none';
+    document.getElementById('tc-reject-reason').value = '';
+
+    const badge = document.getElementById('tc-status-badge');
+    const statusCls =
+      tc.status === 'Approved' ? 'uc-status-approved' :
+      tc.status === 'Rejected' ? 'uc-status-rejected' :
+      tc.status === 'Complete' ? 'uc-status-complete' :
+                                  'uc-status-review';
+    badge.className = `badge ${statusCls}`;
+    badge.textContent = tc.status;
+    document.getElementById('tc-push-btn').style.display = tc.status === 'Approved' ? '' : 'none';
+    document.getElementById('tc-push-btn').disabled = false;
+    document.getElementById('tc-push-spinner').style.display = 'none';
+
+    const rejDisplay = document.getElementById('tc-rejection-display');
+    if (tc.status === 'Rejected' && tc.rejection_reason) {
+      document.getElementById('tc-rejection-text').textContent = tc.rejection_reason;
+      rejDisplay.style.display = '';
+    } else {
+      rejDisplay.style.display = 'none';
+    }
+    document.getElementById('tc-regen-btn').disabled = false;
+    document.getElementById('tc-regen-status').textContent = '';
+    document.getElementById('tc-regen-spinner').style.display = 'none';
+
+    document.getElementById('tc-detail').style.display = '';
+    document.getElementById('tc-detail').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) { alert('Failed to load test case: ' + e.message); }
+}
+
+async function saveDraftTC() {
+  if (!_currentTCId) return;
+  const text = document.getElementById('tc-edit-area').value;
+  try {
+    await apiFetch('/api/testcases/' + _currentTCId, { method: 'PUT', body: JSON.stringify({ current_text: text }) });
+    const tc = _allTC.find(t => t.id === _currentTCId);
+    if (tc) tc.current_text = text;
+  } catch (e) { alert('Save failed: ' + e.message); }
+}
+
+async function approveTestCase() {
+  if (!_currentTCId) return;
+  const text = document.getElementById('tc-edit-area').value;
+  try {
+    await apiFetch('/api/testcases/' + _currentTCId + '/approve', { method: 'POST', body: JSON.stringify({ current_text: text }) });
+    const tc = _allTC.find(t => t.id === _currentTCId);
+    if (tc) { tc.status = 'Approved'; tc.current_text = text; }
+    _updateTCCounts();
+    openTCDetail(_currentTCId);
+  } catch (e) { alert('Approval failed: ' + e.message); }
+}
+
+function showTCRejectForm() {
+  document.getElementById('tc-reject-form').style.display = '';
+  document.getElementById('tc-reject-reason').focus();
+}
+
+function hideTCRejectForm() {
+  document.getElementById('tc-reject-form').style.display = 'none';
+  document.getElementById('tc-reject-reason').value = '';
+}
+
+async function submitTCRejection() {
+  if (!_currentTCId) return;
+  const reason = document.getElementById('tc-reject-reason').value.trim();
+  if (!reason) { alert('Please enter a rejection reason.'); return; }
+  try {
+    await apiFetch('/api/testcases/' + _currentTCId + '/reject', { method: 'POST', body: JSON.stringify({ reason }) });
+    const tc = _allTC.find(t => t.id === _currentTCId);
+    if (tc) { tc.status = 'Rejected'; tc.rejection_reason = reason; }
+    _updateTCCounts();
+    hideTCRejectForm();
+    openTCDetail(_currentTCId);
+  } catch (e) { alert('Rejection failed: ' + e.message); }
+}
+
+function toggleAllTC(cb) {
+  document.querySelectorAll('.tc-row-check').forEach(c => {
+    c.checked = cb.checked;
+    const id = parseInt(c.value);
+    if (cb.checked) _selectedTCIds.add(id); else _selectedTCIds.delete(id);
+  });
+  _updateTCBulkBar();
+}
+
+function toggleTCSelection(id, cb) {
+  if (cb.checked) _selectedTCIds.add(id); else _selectedTCIds.delete(id);
+  _updateTCBulkBar();
+}
+
+function _updateTCBulkBar() {
+  const count = _selectedTCIds.size;
+  document.getElementById('tc-bulk-bar').style.display = count > 0 ? '' : 'none';
+  document.getElementById('tc-selected-count').textContent = `${count} item${count !== 1 ? 's' : ''} selected`;
+  const allChecks = document.querySelectorAll('.tc-row-check');
+  const sa = document.getElementById('tc-select-all');
+  if (sa && allChecks.length) {
+    const n = [...allChecks].filter(c => c.checked).length;
+    sa.checked = n === allChecks.length;
+    sa.indeterminate = n > 0 && n < allChecks.length;
+  }
+}
+
+function clearTCSelection() {
+  _selectedTCIds.clear();
+  document.querySelectorAll('.tc-row-check').forEach(c => c.checked = false);
+  const sa = document.getElementById('tc-select-all');
+  if (sa) { sa.checked = false; sa.indeterminate = false; }
+  _updateTCBulkBar();
+}
+
+async function bulkDeleteTC() {
+  const count = _selectedTCIds.size;
+  if (!count) return;
+  if (!await confirmDialog(`Delete ${count} test case${count !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+  const ids = [..._selectedTCIds];
+  try {
+    await apiFetch('/api/testcases/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) });
+    _allTC = _allTC.filter(t => !ids.includes(t.id));
+    _selectedTCIds.clear();
+    if (_currentTCId && ids.includes(_currentTCId)) {
+      document.getElementById('tc-detail').style.display = 'none';
+      _currentTCId = null;
+    }
+    _updateTCCounts();
+    filterTC(_currentTCFilter);
+  } catch (e) { alert('Bulk delete failed: ' + e.message); }
+}
+
+async function deleteTestCase() {
+  if (!_currentTCId) return;
+  if (!await confirmDialog('Delete this test case? This cannot be undone.')) return;
+  try {
+    await apiFetch('/api/testcases/' + _currentTCId, { method: 'DELETE' });
+    _allTC = _allTC.filter(t => t.id !== _currentTCId);
+    _currentTCId = null;
+    document.getElementById('tc-detail').style.display = 'none';
+    _updateTCCounts();
+    filterTC(_currentTCFilter);
+  } catch (e) { alert('Delete failed: ' + e.message); }
+}
+
+async function pushTCToClickUp() {
+  if (!_currentTCId) return;
+  const btn     = document.getElementById('tc-push-btn');
+  const spinner = document.getElementById('tc-push-spinner');
+  btn.disabled = true;
+  spinner.style.display = '';
+  try {
+    await apiFetch('/api/testcases/' + _currentTCId + '/push-clickup', { method: 'POST' });
+    const tc = _allTC.find(t => t.id === _currentTCId);
+    if (tc) tc.status = 'Complete';
+    _updateTCCounts();
+    filterTC(_currentTCFilter);
+    openTCDetail(_currentTCId);
+  } catch (e) {
+    alert('Push to ClickUp failed: ' + e.message);
+    btn.disabled = false;
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+async function regenerateTestCase() {
+  if (!_currentTCId) return;
+  const btn     = document.getElementById('tc-regen-btn');
+  const spinner = document.getElementById('tc-regen-spinner');
+  const status  = document.getElementById('tc-regen-status');
+  btn.disabled = true;
+  spinner.style.display = '';
+  status.textContent = 'Sending to LLM…';
+  try {
+    const result = await apiFetch('/api/testcases/' + _currentTCId + '/regenerate', { method: 'POST' });
+    const tc = _allTC.find(t => t.id === _currentTCId);
+    if (tc) { tc.status = 'Ready for Review'; tc.current_text = result.new_text; tc.rejection_reason = null; }
+    _updateTCCounts();
+    filterTC(_currentTCFilter);
+    await openTCDetail(_currentTCId);
+  } catch (e) {
+    status.textContent = 'Failed: ' + e.message;
+    btn.disabled = false;
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
 // ── init ──────────────────────────────────────────────────────────────────────
 selectPipeline(1);
+// Seed the nav badge on startup without navigating to the page
+apiFetch('/api/usecases').then(rows => { _allUC = rows; _updateUCCounts(); }).catch(() => {});
+apiFetch('/api/testcases').then(rows => { _allTC = rows; _updateTCCounts(); }).catch(() => {});
 </script>
 </body>
 </html>

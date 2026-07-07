@@ -9,3 +9,4 @@ httpx
 python-multipart
 pypdf
 python-docx
+openpyxl
