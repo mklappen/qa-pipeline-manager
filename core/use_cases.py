@@ -66,7 +66,10 @@ async def fetch_clickup_context(task_id: str, token: str, log: LogCallback):
 
 
 async def generate_use_cases(context: str, llm_settings: dict, system_prompt: str, log: LogCallback) -> str:
-    return await call_llm(context, system_prompt, llm_settings, log)
+    return await call_llm(
+        context, system_prompt, llm_settings, log,
+        progress_pattern=r"### USE CASE:", progress_label="use cases",
+    )
 
 
 def parse_use_case_blocks(raw_markdown: str, prefix_code: str) -> list:

@@ -1,3 +1,4 @@
+import re
 import time
 from typing import Callable, Awaitable
 
@@ -6,12 +7,24 @@ LogCallback = Callable[[str], Awaitable[None]]
 _PROGRESS_CHUNK_CHARS = 800  # emit a log line each time this many new characters arrive
 
 
-async def call_llm(context: str, system_prompt: str, llm_settings: dict, log: LogCallback) -> str:
-    """Route to Anthropic or a self-hosted OpenAI-compatible endpoint based on settings, streaming progress to `log`."""
+async def call_llm(
+    context: str,
+    system_prompt: str,
+    llm_settings: dict,
+    log: LogCallback,
+    progress_pattern: str | None = None,
+    progress_label: str = "items",
+) -> str:
+    """Route to Anthropic or a self-hosted OpenAI-compatible endpoint based on settings, streaming progress to `log`.
+
+    If `progress_pattern` is given, progress is reported as a count of regex matches in the
+    accumulated response so far (e.g. completed items) instead of a raw character count.
+    """
     host = llm_settings.get("llm_host", "").strip()
     max_tokens = int(llm_settings.get("max_tokens", 8192))
     temperature = float(llm_settings.get("temperature", 0.2))
     started = time.monotonic()
+    item_re = re.compile(progress_pattern) if progress_pattern else None
 
     if host:
         from openai import AsyncOpenAI
@@ -37,7 +50,12 @@ async def call_llm(context: str, system_prompt: str, llm_settings: dict, log: Lo
             if not delta:
                 continue
             text += delta
-            if len(text) - last_logged >= _PROGRESS_CHUNK_CHARS:
+            if item_re:
+                count = len(item_re.findall(text))
+                if count > last_logged:
+                    last_logged = count
+                    await log(f"  ...{last_logged:,} {progress_label} created ({time.monotonic() - started:.1f}s)")
+            elif len(text) - last_logged >= _PROGRESS_CHUNK_CHARS:
                 last_logged = len(text)
                 await log(f"  ...{last_logged:,} chars received ({time.monotonic() - started:.1f}s)")
         await log(f"Response complete: {len(text):,} chars in {time.monotonic() - started:.1f}s.")
@@ -59,7 +77,12 @@ async def call_llm(context: str, system_prompt: str, llm_settings: dict, log: Lo
         ) as stream:
             async for delta in stream.text_stream:
                 text += delta
-                if len(text) - last_logged >= _PROGRESS_CHUNK_CHARS:
+                if item_re:
+                    count = len(item_re.findall(text))
+                    if count > last_logged:
+                        last_logged = count
+                        await log(f"  ...{last_logged:,} {progress_label} created ({time.monotonic() - started:.1f}s)")
+                elif len(text) - last_logged >= _PROGRESS_CHUNK_CHARS:
                     last_logged = len(text)
                     await log(f"  ...{last_logged:,} chars received ({time.monotonic() - started:.1f}s)")
             final_message = await stream.get_final_message()

@@ -9,7 +9,10 @@ LogCallback = Callable[[str], Awaitable[None]]
 
 
 async def generate_test_cases(context: str, llm_settings: dict, system_prompt: str, log: LogCallback) -> list:
-    raw = await call_llm(context, system_prompt, llm_settings, log)
+    raw = await call_llm(
+        context, system_prompt, llm_settings, log,
+        progress_pattern=r'"title"\s*:', progress_label="test cases",
+    )
     return _parse_test_cases_json(raw, log)
 
 
