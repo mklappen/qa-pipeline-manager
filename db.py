@@ -678,6 +678,15 @@ def complete_use_case(uc_id: int):
         )
 
 
+def reactivate_use_case(uc_id: int):
+    """Move a Complete use case back to Approved so it's eligible for test-case generation again."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE use_cases SET status = 'Approved' WHERE id = ?",
+            (uc_id,),
+        )
+
+
 def complete_test_case(tc_id: int):
     with get_db() as conn:
         conn.execute(

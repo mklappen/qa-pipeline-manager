@@ -306,6 +306,7 @@ async def _p4_use_cases_from_text(req, llm, log):
 
 
 async def _p5_tests_from_use_cases(req, llm, log):
+    approved = None
     if req.use_case_text:
         cases = tc_core.parse_use_cases_from_markdown(req.use_case_text)
         if not cases:
@@ -346,5 +347,10 @@ async def _p5_tests_from_use_cases(req, llm, log):
     test_cases = await tc_core.generate_test_cases(context, llm, system, log)
     _apply_use_case_priority(test_cases, cases)
     await log(f"Generated {len(test_cases)} test cases.")
+
+    if approved:
+        for uc in approved:
+            await asyncio.to_thread(db.complete_use_case, uc["id"])
+        await log(f"Marked {len(approved)} use case(s) as Complete.")
 
     return tc_core.format_test_cases_markdown(prefix, test_cases)

@@ -172,6 +172,17 @@ async def push_uc_to_clickup(uc_id: int):
     return {"ok": True, "clickup_id": resp.json().get("id")}
 
 
+@router.post("/{uc_id}/reactivate")
+async def reactivate_use_case(uc_id: int):
+    uc = await asyncio.to_thread(db.get_use_case, uc_id)
+    if not uc:
+        raise HTTPException(404, "Use case not found")
+    if uc["status"] != "Complete":
+        raise HTTPException(400, "Only Complete use cases can be reactivated.")
+    await asyncio.to_thread(db.reactivate_use_case, uc_id)
+    return {"ok": True}
+
+
 @router.post("/{uc_id}/regenerate")
 async def regenerate_use_case(uc_id: int):
     uc = await asyncio.to_thread(db.get_use_case, uc_id)

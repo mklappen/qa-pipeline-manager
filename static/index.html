@@ -689,6 +689,9 @@
             <i class="bi bi-cloud-upload me-1"></i>Push to ClickUp
           </button>
           <div class="spinner-border spinner-border-sm text-primary" id="uc-push-spinner" style="display:none"></div>
+          <button class="btn btn-outline-primary btn-sm" id="uc-reactivate-btn" onclick="reactivateUseCase()" style="display:none">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Reactivate
+          </button>
           <button class="btn btn-outline-danger btn-sm ms-auto" onclick="deleteUseCase()">
             <i class="bi bi-trash me-1"></i>Delete
           </button>
@@ -1556,6 +1559,8 @@ async function openUCDetail(ucId) {
     document.getElementById('uc-push-btn').style.display = uc.status === 'Approved' ? '' : 'none';
     document.getElementById('uc-push-btn').disabled = false;
     document.getElementById('uc-push-spinner').style.display = 'none';
+    document.getElementById('uc-reactivate-btn').style.display = uc.status === 'Complete' ? '' : 'none';
+    document.getElementById('uc-reactivate-btn').disabled = false;
 
     const rejDisplay = document.getElementById('uc-rejection-display');
     if (uc.status === 'Rejected' && uc.rejection_reason) {
@@ -1594,6 +1599,23 @@ async function approveUseCase() {
     _updateUCCounts();
     openUCDetail(_currentUCId);
   } catch (e) { alert('Approval failed: ' + e.message); }
+}
+
+async function reactivateUseCase() {
+  if (!_currentUCId) return;
+  const btn = document.getElementById('uc-reactivate-btn');
+  btn.disabled = true;
+  try {
+    await apiFetch('/api/usecases/' + _currentUCId + '/reactivate', { method: 'POST' });
+    const uc = _allUC.find(u => u.id === _currentUCId);
+    if (uc) uc.status = 'Approved';
+    _updateUCCounts();
+    filterUC(_currentUCFilter);
+    await openUCDetail(_currentUCId);
+  } catch (e) {
+    alert('Reactivate failed: ' + e.message);
+    btn.disabled = false;
+  }
 }
 
 function showRejectForm() {
