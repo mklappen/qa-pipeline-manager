@@ -59,14 +59,15 @@
   .pipeline-card .label { font-size: .72rem; font-weight: 600; color: #444; line-height: 1.3; }
 
   /* ── log terminal ── */
-  #log-output {
+  .log-terminal {
     background: #0d1117; color: #58a6ff; font-family: 'Consolas', monospace;
     font-size: .8rem; padding: 1rem; border-radius: 8px;
     height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
   }
-  #log-output .log-line { margin: 0; line-height: 1.6; }
-  #log-output .log-line.err { color: #f85149; }
-  #log-output .log-line.ok  { color: #3fb950; }
+  .log-terminal.log-terminal-sm { height: 140px; }
+  .log-terminal .log-line { margin: 0; line-height: 1.6; }
+  .log-terminal .log-line.err { color: #f85149; }
+  .log-terminal .log-line.ok  { color: #3fb950; }
 
   /* ── markdown result ── */
   #result-output {
@@ -330,7 +331,7 @@
       </ul>
       <div class="tab-content border border-top-0 rounded-bottom p-0">
         <div id="panel-log" class="tab-pane-content">
-          <div id="log-output"></div>
+          <div id="log-output" class="log-terminal"></div>
         </div>
         <div id="panel-result" style="display:none">
           <div class="d-flex justify-content-end gap-2 p-2 border-bottom bg-light rounded-0">
@@ -833,6 +834,7 @@
             <div class="spinner-border spinner-border-sm text-warning" id="tc-regen-spinner" style="display:none"></div>
             <small class="text-muted" id="tc-regen-status"></small>
           </div>
+          <div id="tc-regen-log" class="log-terminal log-terminal-sm mt-2" style="display:none"></div>
         </div>
 
         <!-- action buttons -->
@@ -1197,8 +1199,8 @@ function buildPayload() {
 }
 
 // ── output helpers ────────────────────────────────────────────────────────────
-function appendLog(msg, cls = '') {
-  const el = document.getElementById('log-output');
+function appendLog(msg, cls = '', targetId = 'log-output') {
+  const el = document.getElementById(targetId);
   const line = document.createElement('div');
   line.className = 'log-line' + (cls ? ' ' + cls : '');
   line.textContent = '› ' + msg;
@@ -1905,6 +1907,8 @@ async function openTCDetail(tcId) {
     document.getElementById('tc-regen-btn').disabled = false;
     document.getElementById('tc-regen-status').textContent = '';
     document.getElementById('tc-regen-spinner').style.display = 'none';
+    document.getElementById('tc-regen-log').style.display = 'none';
+    document.getElementById('tc-regen-log').innerHTML = '';
 
     document.getElementById('tc-detail').style.display = '';
     document.getElementById('tc-detail').scrollIntoView({ behavior: 'smooth' });
@@ -2046,19 +2050,43 @@ async function pushTCToClickUp() {
 
 async function regenerateTestCase() {
   if (!_currentTCId) return;
+  const tcId    = _currentTCId;
   const btn     = document.getElementById('tc-regen-btn');
   const spinner = document.getElementById('tc-regen-spinner');
   const status  = document.getElementById('tc-regen-status');
+  const logEl   = document.getElementById('tc-regen-log');
   btn.disabled = true;
   spinner.style.display = '';
   status.textContent = 'Sending to LLM…';
+  logEl.style.display = '';
+  logEl.innerHTML = '';
+
   try {
-    const result = await apiFetch('/api/testcases/' + _currentTCId + '/regenerate', { method: 'POST' });
-    const tc = _allTC.find(t => t.id === _currentTCId);
-    if (tc) { tc.status = 'Ready for Review'; tc.current_text = result.new_text; tc.rejection_reason = null; }
+    const { job_id } = await apiFetch('/api/testcases/' + tcId + '/regenerate', { method: 'POST' });
+    const newText = await new Promise((resolve, reject) => {
+      const evtSrc = new EventSource('/api/testcases/' + tcId + '/regenerate/stream/' + job_id);
+      evtSrc.onmessage = e => {
+        const item = JSON.parse(e.data);
+        if (item.type === 'log') {
+          appendLog(item.message, '', 'tc-regen-log');
+        } else if (item.type === 'done') {
+          evtSrc.close();
+          resolve(item.new_text);
+        } else if (item.type === 'error') {
+          evtSrc.close();
+          reject(new Error(item.message));
+        }
+      };
+      evtSrc.onerror = () => {
+        evtSrc.close();
+        reject(new Error('Connection lost.'));
+      };
+    });
+    const tc = _allTC.find(t => t.id === tcId);
+    if (tc) { tc.status = 'Ready for Review'; tc.current_text = newText; tc.rejection_reason = null; }
     _updateTCCounts();
     filterTC(_currentTCFilter);
-    await openTCDetail(_currentTCId);
+    await openTCDetail(tcId);
   } catch (e) {
     status.textContent = 'Failed: ' + e.message;
     btn.disabled = false;

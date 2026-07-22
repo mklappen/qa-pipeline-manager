@@ -7,6 +7,14 @@ LogCallback = Callable[[str], Awaitable[None]]
 _PROGRESS_CHUNK_CHARS = 800  # emit a log line each time this many new characters arrive
 
 
+async def apply_learning_context(ctx: str, system_prompt: str, log: LogCallback) -> str:
+    """Prepend learning context (past human review feedback) to a system prompt, logging what was added."""
+    if not ctx:
+        return system_prompt
+    await log(f"Learning context added to prompt:\n{ctx}")
+    return ctx + "\n\n" + system_prompt
+
+
 async def call_llm(
     context: str,
     system_prompt: str,

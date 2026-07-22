@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import db
 from core import use_cases as uc_core
 from core import tests as tc_core
+from core.llm import apply_learning_context as _apply_learning_context
 
 router = APIRouter()
 
@@ -231,8 +232,7 @@ async def _p1_use_cases_from_remote(req, llm, conf, cu, log):
     prefix = req.prefix_override or uc_core.generate_acronym(source_title)
     system = req.system_prompt_override or llm["use_case_system_prompt"]
     learning_ctx = await asyncio.to_thread(db.get_learning_context)
-    if learning_ctx:
-        system = learning_ctx + "\n\n" + system
+    system = await _apply_learning_context(learning_ctx, system, log)
     raw = await uc_core.generate_use_cases(combined, llm, system, log)
     cases = uc_core.parse_use_case_blocks(raw, prefix)
     await log(f"Generated {len(cases)} use cases.")
@@ -248,8 +248,7 @@ async def _p2_tests_from_clickup(req, llm, cu, log):
     context = "\n\n".join(f"{_uc_context_header(c)}\n{c['content']}" for c in cases)
     system = req.system_prompt_override or llm["test_case_system_prompt"]
     tc_learning_ctx = await asyncio.to_thread(db.get_test_case_learning_context)
-    if tc_learning_ctx:
-        system = tc_learning_ctx + "\n\n" + system
+    system = await _apply_learning_context(tc_learning_ctx, system, log)
     test_cases = await tc_core.generate_test_cases(context, llm, system, log)
     _apply_use_case_priority(test_cases, cases)
     await log(f"Generated {len(test_cases)} test cases.")
@@ -280,8 +279,7 @@ async def _p3_tests_from_remote(req, llm, conf, cu, log):
     prefix = req.prefix_override or uc_core.generate_acronym(source_title)
     system = req.system_prompt_override or llm["test_case_system_prompt"]
     tc_learning_ctx = await asyncio.to_thread(db.get_test_case_learning_context)
-    if tc_learning_ctx:
-        system = tc_learning_ctx + "\n\n" + system
+    system = await _apply_learning_context(tc_learning_ctx, system, log)
     test_cases = await tc_core.generate_test_cases(combined, llm, system, log)
     await log(f"Generated {len(test_cases)} test cases.")
 
@@ -297,8 +295,7 @@ async def _p4_use_cases_from_text(req, llm, log):
     prefix = req.prefix_override or (uc_core.generate_acronym(m.group(1).strip()) if m else "REQ")
     system = req.system_prompt_override or llm["use_case_system_prompt"]
     learning_ctx = await asyncio.to_thread(db.get_learning_context)
-    if learning_ctx:
-        system = learning_ctx + "\n\n" + system
+    system = await _apply_learning_context(learning_ctx, system, log)
     raw = await uc_core.generate_use_cases(combined, llm, system, log)
     cases = uc_core.parse_use_case_blocks(raw, prefix)
     await log(f"Generated {len(cases)} use cases.")
@@ -342,8 +339,7 @@ async def _p5_tests_from_use_cases(req, llm, log):
     context = "\n\n".join(f"{_uc_context_header(c)}\n{c['content']}" for c in cases)
     system = req.system_prompt_override or llm["test_case_system_prompt"]
     tc_learning_ctx = await asyncio.to_thread(db.get_test_case_learning_context)
-    if tc_learning_ctx:
-        system = tc_learning_ctx + "\n\n" + system
+    system = await _apply_learning_context(tc_learning_ctx, system, log)
     test_cases = await tc_core.generate_test_cases(context, llm, system, log)
     _apply_use_case_priority(test_cases, cases)
     await log(f"Generated {len(test_cases)} test cases.")

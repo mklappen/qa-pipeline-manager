@@ -1,13 +1,16 @@
 import asyncio
+import json
+import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import db
-from core.llm import call_llm
+from core.llm import call_llm, apply_learning_context
 from core import export as export_core
 
 _REGEN_SYSTEM_PROMPT = """\
@@ -32,6 +35,9 @@ Output ONLY the revised test case block. No introduction, no conclusion, no expl
 """
 
 router = APIRouter()
+
+# In-memory job registry for streaming regenerate progress: job_id → asyncio.Queue
+_regen_jobs: Dict[str, asyncio.Queue] = {}
 
 
 class ApproveRequest(BaseModel):
@@ -177,19 +183,59 @@ async def regenerate_test_case(tc_id: int):
     if not tc.get("rejection_reason"):
         raise HTTPException(400, "Test case has no rejection reason to regenerate from.")
 
-    settings = await asyncio.to_thread(db.get_all_settings)
-    llm_base = settings.get("llm", {})
-    llm = {**llm_base, "temperature": llm_base.get("test_case_temperature", "0.2")}
+    job_id = str(uuid.uuid4())
+    queue: asyncio.Queue = asyncio.Queue()
+    _regen_jobs[job_id] = queue
+    asyncio.create_task(_run_regenerate(job_id, tc_id, tc, queue))
+    return {"job_id": job_id}
 
-    context = (
-        f"REJECTED TEST CASE:\n{tc['original_text']}\n\n"
-        f"REVIEWER REJECTION REASON:\n{tc['rejection_reason']}\n\n"
-        f"Rewrite this test case to fully address the reviewer's feedback while keeping all other aspects intact."
+
+async def _run_regenerate(job_id: str, tc_id: int, tc: dict, queue: asyncio.Queue):
+    async def log(msg: str):
+        await queue.put({"type": "log", "message": msg})
+
+    try:
+        settings = await asyncio.to_thread(db.get_all_settings)
+        llm_base = settings.get("llm", {})
+        llm = {**llm_base, "temperature": llm_base.get("test_case_temperature", "0.2")}
+
+        context = (
+            f"REJECTED TEST CASE:\n{tc['original_text']}\n\n"
+            f"REVIEWER REJECTION REASON:\n{tc['rejection_reason']}\n\n"
+            f"Rewrite this test case to fully address the reviewer's feedback while keeping all other aspects intact."
+        )
+
+        tc_learning_ctx = await asyncio.to_thread(db.get_test_case_learning_context)
+        system = await apply_learning_context(tc_learning_ctx, _REGEN_SYSTEM_PROMPT, log)
+
+        new_text = await call_llm(context, system, llm, log)
+        await asyncio.to_thread(db.reset_test_case_for_review, tc_id, new_text.strip())
+        await queue.put({"type": "done", "new_text": new_text.strip()})
+    except Exception as exc:
+        await queue.put({"type": "error", "message": str(exc)})
+
+
+@router.get("/{tc_id}/regenerate/stream/{job_id}")
+async def stream_regenerate(tc_id: int, job_id: str):
+    if job_id not in _regen_jobs:
+        raise HTTPException(404, "Job not found")
+
+    async def generator():
+        queue = _regen_jobs[job_id]
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=120)
+                yield f"data: {json.dumps(item)}\n\n"
+                if item["type"] in ("done", "error"):
+                    _regen_jobs.pop(job_id, None)
+                    break
+            except asyncio.TimeoutError:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Regeneration timed out'})}\n\n"
+                _regen_jobs.pop(job_id, None)
+                break
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-    async def _log(msg: str):
-        pass
-
-    new_text = await call_llm(context, _REGEN_SYSTEM_PROMPT, llm, _log)
-    await asyncio.to_thread(db.reset_test_case_for_review, tc_id, new_text.strip())
-    return {"new_text": new_text.strip()}
